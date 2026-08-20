@@ -1,0 +1,65 @@
+{
+  "hosting": [
+    {
+      "target": "justsaying-hi",
+      "public": "dist",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ],
+      "headers": [
+        {
+          "source": "**",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        },
+        {
+          "source": "**/*.@(js|css|jpg|jpeg|gif|png|svg|webp|woff|woff2|ttf|eot|mp3|mp4|glb|ico)",
+          "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
+        },
+        {
+          "source": "/playlist.mp3",
+          "headers": [{ "key": "Cache-Control", "value": "public, max-age=86400" }]
+        }
+      ]
+    },
+    {
+      "target": "edushare101",
+      "public": "dist",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ],
+      "headers": [
+        {
+          "source": "**",
+          "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+        },
+        {
+          "source": "**/*.@(js|css|jpg|jpeg|gif|png|svg|webp|woff|woff2|ttf|eot|mp3|mp4|glb|ico)",
+          "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
+        },
+        {
+          "source": "/playlist.mp3",
+          "headers": [{ "key": "Cache-Control", "value": "public, max-age=86400" }]
+        }
+      ]
+    }
+  ],
+  "firestore": {
+    "rules": "firestore.rules"
+  }
+}

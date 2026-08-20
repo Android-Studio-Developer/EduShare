@@ -1,0 +1,18 @@
+{
+  "projects": {
+    "edushare-test": "edushare101"
+  },
+  "targets": {
+    "edushare101": {
+      "hosting": {
+        "justsaying-hi": [
+          "justsaying-hi"
+        ],
+        "edushare101": [
+          "edushare101"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}
