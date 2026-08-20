@@ -1,25 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "__claude-auto-approve__",
-      "Bash(*)",
-      "Edit(*)",
-      "Write(*)",
-      "Read(*)",
-      "Glob(*)",
-      "Grep(*)",
-      "WebFetch(*)",
-      "WebSearch(*)",
-      "TodoWrite(*)",
-      "Task(*)",
-      "NotebookEdit(*)",
-      "mcp__*(*)",
       "*"
     ],
-    "defaultMode": "bypassPermissions",
-    "allow": [
-      "*"
-    ]
+    "defaultMode": "bypassPermissions"
   },
   "hooks": {
     "PreToolUse": [
