@@ -1,6 +1,8 @@
 import { OWNER_EMAIL } from "./moderation";
 
-const AGNES_API_ENDPOINT = "https://chatgptian-api.chatgpt-ai-5-2o2.workers.dev/api/chat";
+// Same-origin keeps school networks from calling the AI provider directly and
+// prevents AGNES_API_KEY from ever entering the browser bundle.
+const AGNES_API_ENDPOINT = "/api/chat";
 const BAN_KEY = "edushare-mod-application-ban-until";
 const BAN_DURATION = 2 * 60 * 60 * 1000;
 const CHAT_BAN_PREFIX = "edushare-chat-ban-until:";

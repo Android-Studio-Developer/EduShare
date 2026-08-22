@@ -1,11 +1,14 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Coins, Gamepad2, Gift, Lock, User } from "lucide-react";
+import { Check, Coins, Gamepad2, Gift, Layers3, Lock, Palette, PanelTop, Sparkles, User } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { claimDailyCredits, ensureProfile, isOnline, subscribeToProfile, updateProfileData } from "../lib/profiles";
 import { checkUsernameAvailable, claimUsername, isValidUsername, normalizeUsername } from "../lib/usernames";
 import { ensureWallet, subscribeToBalance } from "../lib/shop";
 import { isStealthEnabled, setStealthEnabled } from "../components/StealthMode";
 import { useUiVersion } from "../context/UiVersionContext";
+import { useTheme } from "../context/ThemeContext";
+import { COLOR_THEMES } from "../lib/colorTheme";
+import type { UiVersion } from "../lib/uiVersion";
 import { useBackground } from "../context/BackgroundContext";
 import { getTextSize, isHighContrast, isReduceMotion, setHighContrast, setReduceMotion, setTextSize, type TextSize } from "../lib/accessibility";
 import { sendPublicMessage } from "../lib/chat";
@@ -33,7 +36,7 @@ import StatusBadge from "../components/StatusBadge";
 import StatusDot from "../components/StatusDot";
 import UserBadges from "../components/UserBadges";
 
-export default function Profile() { const {user,role,syncDisplayName}=useAuth(); const {uiVersion,setUiVersion:setUiVersionState}=useUiVersion(); const {background,setBackground}=useBackground(); const [profile,setProfile]=useState<UserProfile|null>(null); const [balance,setBalance]=useState(0); const [message,setMessage]=useState(""); const [rankMessage,setRankMessage]=useState(""); const [pendingRank,setPendingRank]=useState(""); const [stealth,setStealth]=useState(isStealthEnabled()); const [reduceMotion,setReduceMotionState]=useState(isReduceMotion()); const [textSize,setTextSizeState]=useState<TextSize>(getTextSize()); const [highContrast,setHighContrastState]=useState(isHighContrast());
+export default function Profile() { const {user,role,syncDisplayName}=useAuth(); const {uiVersion,setUiVersion:setUiVersionState}=useUiVersion(); const {theme,setTheme}=useTheme(); const {background,setBackground}=useBackground(); const [profile,setProfile]=useState<UserProfile|null>(null); const [balance,setBalance]=useState(0); const [message,setMessage]=useState(""); const [rankMessage,setRankMessage]=useState(""); const [pendingRank,setPendingRank]=useState(""); const [stealth,setStealth]=useState(isStealthEnabled()); const [reduceMotion,setReduceMotionState]=useState(isReduceMotion()); const [textSize,setTextSizeState]=useState<TextSize>(getTextSize()); const [highContrast,setHighContrastState]=useState(isHighContrast());
   const [usernameInput,setUsernameInput]=useState("");
   const [usernameStatus,setUsernameStatus]=useState<"idle"|"checking"|"available"|"taken"|"invalid"|"saving"|"saved"|"error">("idle");
   const [usernameError,setUsernameError]=useState("");
@@ -60,7 +63,7 @@ export default function Profile() { const {user,role,syncDisplayName}=useAuth();
     else { setUsernameStatus("error"); setUsernameError(result.reason); }
   }
   function toggleStealth(){const next=!stealth;setStealth(next);setStealthEnabled(next);}
-  function chooseUiVersion(v:"v1"|"v2"){setUiVersionState(v);}
+  function chooseUiVersion(v:UiVersion){setUiVersionState(v);}
   function toggleReduceMotion(){const next=!reduceMotion;setReduceMotionState(next);setReduceMotion(next);}
   function toggleTextSize(){const next:TextSize=textSize==="large"?"normal":"large";setTextSizeState(next);setTextSize(next);}
   function toggleHighContrast(){const next=!highContrast;setHighContrastState(next);setHighContrast(next);}
@@ -157,18 +160,50 @@ export default function Profile() { const {user,role,syncDisplayName}=useAuth();
       </button>
     </div>
 
-    <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-border bg-surface p-5">
+    <div className="mt-4 rounded-2xl border border-border bg-surface p-5">
       <div>
         <p className="font-mono text-sm font-semibold text-white">Interface</p>
-        <p className="mt-0.5 text-xs text-white/40">V2 switches to a left sidebar layout with grouped navigation, a Plus Jakarta Sans font, and card-based sections.</p>
+        <p className="mt-0.5 text-xs text-white/40">Choose how eduShare is organized. Your selection is saved on this device.</p>
       </div>
-      <div className="flex shrink-0 rounded-full border border-border bg-surface-2 p-1">
-        <button type="button" onClick={()=>chooseUiVersion("v1")} className={`cursor-target rounded-full px-3 py-1 text-xs font-semibold transition-colors ${uiVersion==="v1"?"bg-brand-500 text-white":"text-white/50 hover:text-white"}`}>V1</button>
-        <button type="button" onClick={()=>chooseUiVersion("v2")} className={`cursor-target rounded-full px-3 py-1 text-xs font-semibold transition-colors ${uiVersion==="v2"?"bg-brand-500 text-white":"text-white/50 hover:text-white"}`}>V2</button>
+      <div className="mt-4 grid gap-2 sm:grid-cols-3">
+        {([
+          {id:"v1",label:"Classic",description:"Top navigation",icon:PanelTop},
+          {id:"v2",label:"Sidebar",description:"Grouped navigation",icon:Layers3},
+          {id:"v3",label:"Workspace",description:"Responsive and focused",icon:Sparkles},
+        ] as const).map((option)=>{
+          const Icon=option.icon;
+          const active=uiVersion===option.id;
+          return <button key={option.id} type="button" onClick={()=>chooseUiVersion(option.id)} className={`cursor-target relative flex items-center gap-3 rounded-xl border p-3 text-left transition-all ${active?"border-brand-400 bg-brand-500/15 shadow-[0_10px_30px_-20px_var(--color-brand-400)]":"border-border bg-surface-2 hover:border-white/20"}`}>
+            <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${active?"bg-brand-500 text-white":"bg-white/[.05] text-white/45"}`}><Icon size={17}/></span>
+            <span><strong className="block text-xs text-white">{option.label} <span className="text-white/30">{option.id.toUpperCase()}</span></strong><small className="text-[10px] text-white/40">{option.description}</small></span>
+            {active&&<Check size={14} className="absolute right-2 top-2 text-brand-300"/>}
+          </button>;
+        })}
       </div>
     </div>
 
-    {uiVersion==="v2" && (
+    <div className="mt-4 rounded-2xl border border-border bg-surface p-5">
+      <div className="flex items-start gap-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-brand-500/15 text-brand-300"><Palette size={17}/></span>
+        <div>
+          <p className="font-mono text-sm font-semibold text-white">Color theme</p>
+          <p className="mt-0.5 text-xs text-white/40">Pick a palette for navigation, buttons, focus states, and page accents.</p>
+        </div>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
+        {COLOR_THEMES.map((option)=>{
+          const active=theme===option.id;
+          return <button key={option.id} type="button" onClick={()=>setTheme(option.id)} className={`cursor-target relative rounded-xl border p-2.5 text-left transition-all ${active?"border-brand-400 bg-brand-500/10":"border-border bg-surface-2 hover:border-white/20"}`} aria-pressed={active}>
+            <span className="mb-2 flex -space-x-1">{option.colors.map((color)=><span key={color} className="h-5 w-5 rounded-full border-2 border-[#111318]" style={{backgroundColor:color}}/>)}</span>
+            <strong className="block text-[11px] text-white">{option.label}</strong>
+            <small className="block truncate text-[9px] text-white/35">{option.description}</small>
+            {active&&<Check size={13} className="absolute right-2 top-2 text-brand-300"/>}
+          </button>;
+        })}
+      </div>
+    </div>
+
+    {(uiVersion==="v2" || uiVersion==="v3") && (
       <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-border bg-surface p-5">
         <div>
           <p className="font-mono text-sm font-semibold text-white">Background</p>

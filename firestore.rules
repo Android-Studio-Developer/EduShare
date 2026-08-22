@@ -804,6 +804,63 @@ service cloud.firestore {
       }
     }
 
+    match /wordleDuels/{duelId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && !isBanned()
+        && request.resource.data.hostId == request.auth.uid
+        && request.resource.data.hostName is string
+        && request.resource.data.hostPhotoUrl is string
+        && request.resource.data.guestId == ''
+        && request.resource.data.invitedId is string
+        && request.resource.data.answer is string
+        && request.resource.data.answer.matches('^[A-Z]{5}$')
+        && request.resource.data.hostGuesses.size() == 0
+        && request.resource.data.guestGuesses.size() == 0
+        && request.resource.data.status == 'waiting'
+        && request.resource.data.winnerId == '';
+      allow update: if request.auth != null
+        && !isBanned()
+        && (
+          (resource.data.status == 'waiting'
+            && resource.data.hostId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'finishedAt'])
+            && request.resource.data.status == 'cancelled')
+          || (resource.data.status == 'waiting'
+            && resource.data.hostId != request.auth.uid
+            && (resource.data.invitedId == '' || resource.data.invitedId == request.auth.uid)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['guestId', 'guestName', 'guestPhotoUrl', 'status', 'startedAt'])
+            && request.resource.data.guestId == request.auth.uid
+            && request.resource.data.guestName is string
+            && request.resource.data.guestPhotoUrl is string
+            && request.resource.data.status == 'active')
+          || (resource.data.status == 'active'
+            && resource.data.hostId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hostGuesses', 'status', 'winnerId', 'winnerName', 'finishedAt'])
+            && request.resource.data.hostGuesses.size() == resource.data.hostGuesses.size() + 1
+            && request.resource.data.hostGuesses.size() <= 6
+            && request.resource.data.status in ['active', 'finished'])
+          || (resource.data.status == 'active'
+            && resource.data.guestId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['guestGuesses', 'status', 'winnerId', 'winnerName', 'finishedAt'])
+            && request.resource.data.guestGuesses.size() == resource.data.guestGuesses.size() + 1
+            && request.resource.data.guestGuesses.size() <= 6
+            && request.resource.data.status in ['active', 'finished'])
+        );
+      allow delete: if false;
+
+      match /spectators/{userId} {
+        allow read: if request.auth != null;
+        allow create, update: if request.auth != null
+          && request.auth.uid == userId
+          && request.resource.data.displayName is string
+          && request.resource.data.photoUrl is string
+          && request.resource.data.lastSeenAt is int
+          && request.resource.data.lastSeenAt <= request.time.toMillis();
+        allow delete: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+
     match /duels/{duelId} {
       allow read: if request.auth != null
         && (resource.data.challengerId == request.auth.uid || resource.data.opponentId == request.auth.uid);

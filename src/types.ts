@@ -302,6 +302,42 @@ export interface Duel {
   opponentHandled: boolean;
 }
 
+export type WordleDuelStatus = "waiting" | "active" | "finished" | "cancelled";
+
+export interface WordleDuelGuess {
+  word: string;
+  pattern: string;
+  createdAt: number;
+}
+
+export interface WordleDuel {
+  id: string;
+  hostId: string;
+  hostName: string;
+  hostPhotoUrl: string;
+  guestId: string;
+  guestName: string;
+  guestPhotoUrl: string;
+  invitedId: string;
+  invitedName: string;
+  answer: string;
+  hostGuesses: WordleDuelGuess[];
+  guestGuesses: WordleDuelGuess[];
+  status: WordleDuelStatus;
+  winnerId: string;
+  winnerName: string;
+  createdAt: number;
+  startedAt: number;
+  finishedAt: number;
+}
+
+export interface WordleSpectator {
+  id: string;
+  displayName: string;
+  photoUrl: string;
+  lastSeenAt: number;
+}
+
 export interface FriendRequest {
   id: string;
   fromId: string;

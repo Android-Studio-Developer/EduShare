@@ -1,8 +1,6 @@
-// Vercel serverless function — proxies eduBot's AI requests server-side so
-// the browser never talks to *.workers.dev directly. Deploy this folder to
-// Vercel's free tier (no credit card needed), then point eduShare's
-// AGNES_API_ENDPOINT at https://<your-project>.vercel.app/api/chat.
-const UPSTREAM_URL = "https://chatgptian-api.chatgpt-ai-5-2o2.workers.dev/api/chat";
+// Optional Vercel serverless entrypoint. The key belongs in the deployment's
+// environment settings, never in source code or a VITE_* variable.
+import { askAgnes } from "../agnes.mjs";
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -19,15 +17,6 @@ export default async function handler(req, res) {
     return;
   }
 
-  try {
-    const upstreamResponse = await fetch(UPSTREAM_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(req.body ?? {}),
-    });
-    const data = await upstreamResponse.json();
-    res.status(upstreamResponse.status).json(data);
-  } catch (error) {
-    res.status(502).json({ error: "Could not reach the upstream AI service." });
-  }
+  const result = await askAgnes(req.body ?? {}, process.env.AGNES_API_KEY, process.env.AGNES_MODEL);
+  res.status(result.status).json(result.body);
 }

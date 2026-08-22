@@ -3,6 +3,7 @@ import { Route, Routes } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { UiVersionProvider, useUiVersion } from "./context/UiVersionContext";
+import { ThemeProvider } from "./context/ThemeContext";
 import { BackgroundProvider, useBackground } from "./context/BackgroundContext";
 import { VoiceCallProvider } from "./context/VoiceCallContext";
 import { MusicProvider } from "./context/MusicContext";
@@ -23,6 +24,7 @@ import StealthMode from "./components/StealthMode";
 import ClickSpark from "./components/ClickSpark";
 import Navbar from "./components/Navbar";
 import Sidebar from "./components/Sidebar";
+import V3Shell from "./components/V3Shell";
 import Footer from "./components/Footer";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
@@ -121,6 +123,10 @@ function AppContent() {
 
   const body = banned && role !== "owner" ? <BannedNotice /> : routes;
 
+  if (uiVersion === "v3") {
+    return <V3Shell>{body}</V3Shell>;
+  }
+
   if (uiVersion === "v2") {
     return (
       <div className="flex min-h-screen">
@@ -146,7 +152,7 @@ function SiteBackground({ reduceMotion }: { reduceMotion: boolean }) {
   const { uiVersion } = useUiVersion();
   const { background } = useBackground();
   if (reduceMotion) return null;
-  if (uiVersion === "v2" && background === "galaxy") return <GalaxyBackground />;
+  if ((uiVersion === "v2" || uiVersion === "v3") && background === "galaxy") return <GalaxyBackground />;
   return <BackgroundFX />;
 }
 
@@ -159,29 +165,31 @@ function RealApp() {
 
   return (
     <UiVersionProvider>
-      <BackgroundProvider>
-        <AuthProvider>
-          <MusicProvider>
-            <VoiceCallProvider>
-              <TargetCursor
-                targetSelector=".cursor-target"
-                cursorColor="#e7e9ee"
-                cursorColorOnTarget="#a78bfa"
-                spinDuration={reduceMotion ? 0 : 2.2}
-                hoverDuration={0.12}
-              />
-              <SiteBackground reduceMotion={reduceMotion} />
-              <PlaytimeTracker />
-              <NotificationSound />
-              <PersistentVoiceAudio />
-              <PatchNotesModal />
-              <StealthMode />
-              {!reduceMotion && <ClickSpark sparkColor="#93b4ff" sparkCount={8} sparkRadius={18} duration={450} />}
-              <AppContent />
-            </VoiceCallProvider>
-          </MusicProvider>
-        </AuthProvider>
-      </BackgroundProvider>
+      <ThemeProvider>
+        <BackgroundProvider>
+          <AuthProvider>
+            <MusicProvider>
+              <VoiceCallProvider>
+                <TargetCursor
+                  targetSelector=".cursor-target"
+                  cursorColor="#e7e9ee"
+                  cursorColorOnTarget="#a78bfa"
+                  spinDuration={reduceMotion ? 0 : 2.2}
+                  hoverDuration={0.12}
+                />
+                <SiteBackground reduceMotion={reduceMotion} />
+                <PlaytimeTracker />
+                <NotificationSound />
+                <PersistentVoiceAudio />
+                <PatchNotesModal />
+                <StealthMode />
+                {!reduceMotion && <ClickSpark sparkColor="#93b4ff" sparkCount={8} sparkRadius={18} duration={450} />}
+                <AppContent />
+              </VoiceCallProvider>
+            </MusicProvider>
+          </AuthProvider>
+        </BackgroundProvider>
+      </ThemeProvider>
     </UiVersionProvider>
   );
 }
