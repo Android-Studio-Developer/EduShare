@@ -1,4 +1,4 @@
-import { addDoc, collection, deleteDoc, doc, getDocs, limit, onSnapshot, orderBy, query, runTransaction, updateDoc, writeBatch } from "firebase/firestore";
+import { addDoc, arrayUnion, collection, deleteDoc, doc, getDocs, limit, onSnapshot, orderBy, query, runTransaction, updateDoc, writeBatch } from "firebase/firestore";
 import { db } from "./firebase";
 import type { ChatMessage, CommunityChatServer, Rank } from "../types";
 
@@ -71,6 +71,10 @@ export async function boostCommunityChatServer(serverId: string, userId: string)
 
 export function updateCommunityChatServer(serverId: string, input: Partial<Pick<CommunityChatServer, "name" | "description" | "rules" | "iconUrl" | "bannerUrl" | "linkedMinecraftServerId" | "memberIds" | "bannedUserIds" | "bannedUsernames" | "roles" | "textChannels" | "voiceChannels">>) {
   return updateDoc(doc(db, "communityChatServers", serverId), input);
+}
+
+export function joinCommunityChatServer(serverId: string, userId: string) {
+  return updateDoc(doc(db, "communityChatServers", serverId), { memberIds: arrayUnion(userId) });
 }
 
 export async function deleteCommunityChatServer(serverId: string) {
