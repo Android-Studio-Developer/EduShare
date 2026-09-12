@@ -29,17 +29,18 @@ function publicEmojiPool(profiles: UserProfile[], authorId: string) {
   const byName = new Map<string, CustomEmoji>();
   const author = profiles.find((item) => item.id === authorId);
   [...(author?.customEmojis ?? []), ...profiles.flatMap((item) => item.customEmojis ?? [])].forEach((emoji) => {
-    const name = emoji.name.toLowerCase();
-    if (!byName.has(name) && emoji.url) byName.set(name, { ...emoji, name });
+    const name = emoji.name?.trim().toLowerCase();
+    if (name && emoji.url && !byName.has(name)) byName.set(name, { ...emoji, name });
   });
   return byName;
 }
 
 function renderEmojiText(text: string, emojis: Map<string, CustomEmoji>) {
-  const exact = text.trim().match(/^:([a-z0-9_]{1,20}):$/i);
+  const safeText = text ?? "";
+  const exact = safeText.trim().match(/^:([a-z0-9_]{1,20}):$/i);
   const exactEmoji = exact ? emojis.get(exact[1].toLowerCase()) : undefined;
   if (exactEmoji) return <img src={exactEmoji.url} alt={`:${exactEmoji.name}:`} title={`:${exactEmoji.name}:`} className="my-1 h-24 w-24 object-contain"/>;
-  return text.split(EMOJI_RE).map((part, index) => {
+  return safeText.split(EMOJI_RE).map((part, index) => {
     const match = part.match(/^:([a-z0-9_]{1,20}):$/i);
     const emoji = match ? emojis.get(match[1].toLowerCase()) : undefined;
     return emoji ? <img key={`${emoji.id}-${index}`} src={emoji.url} alt={`:${emoji.name}:`} title={`:${emoji.name}:`} className="mx-0.5 inline-block h-8 w-8 align-middle object-contain"/> : part;

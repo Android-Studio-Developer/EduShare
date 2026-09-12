@@ -114,8 +114,8 @@ function publicEmojiPool(profiles: UserProfile[], authorId: string) {
   const byName = new Map<string, CustomEmoji>();
   const author = profiles.find((profile) => profile.id === authorId);
   [...(author?.customEmojis ?? []), ...profiles.flatMap((profile) => profile.customEmojis ?? [])].forEach((emoji) => {
-    const name = emoji.name.toLowerCase();
-    if (!byName.has(name) && emoji.url) byName.set(name, { ...emoji, name });
+    const name = emoji.name?.trim().toLowerCase();
+    if (name && emoji.url && !byName.has(name)) byName.set(name, { ...emoji, name });
   });
   return [...byName.values()];
 }
