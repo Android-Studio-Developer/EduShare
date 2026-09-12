@@ -25,6 +25,7 @@ import StealthMode from "./components/StealthMode";
 import ClickSpark from "./components/ClickSpark";
 import ReferralRewardPopup from "./components/ReferralRewardPopup";
 import CosmeticsNudge from "./components/CosmeticsNudge";
+import ChatRoomBoundary from "./components/ChatRoomBoundary";
 import Navbar from "./components/Navbar";
 import Sidebar from "./components/Sidebar";
 import V3Shell from "./components/V3Shell";
@@ -103,9 +104,9 @@ function AppContent() {
       <Route path="/friends" element={<ProtectedRoute><Friends /></ProtectedRoute>} />
       <Route path="/party" element={<ProtectedRoute><PartyGuild /></ProtectedRoute>} />
       <Route path="/chat" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
-      <Route path="/chat/servers/:serverId" element={<ProtectedRoute><CommunityServer /></ProtectedRoute>} />
+      <Route path="/chat/servers/:serverId" element={<ProtectedRoute><ChatRoomBoundary roomName="Server panel"><CommunityServer /></ChatRoomBoundary></ProtectedRoute>} />
       <Route path="/chat-servers" element={<ProtectedRoute><ChatServers /></ProtectedRoute>} />
-      <Route path="/chat-servers/:serverId" element={<ProtectedRoute><CommunityServer /></ProtectedRoute>} />
+      <Route path="/chat-servers/:serverId" element={<ProtectedRoute><ChatRoomBoundary roomName="Server panel"><CommunityServer /></ChatRoomBoundary></ProtectedRoute>} />
       <Route path="/voice" element={<ProtectedRoute><Voice /></ProtectedRoute>} />
       <Route path="/voice-lab" element={<ProtectedRoute><VoiceLab /></ProtectedRoute>} />
       <Route path="/movie-drop" element={<ProtectedRoute><MovieDrop /></ProtectedRoute>} />

@@ -15,6 +15,8 @@ import { ensureCommunityVoiceChannel } from "../lib/voice";
 import type { CommunityChatServer, CommunityServerRole, MinecraftServer, UserProfile } from "../types";
 
 const roleOptions: CommunityServerRole[] = ["member", "mod", "admin"];
+const FALLBACK_TEXT_CHANNELS = [{ id: "general", name: "general" }, { id: "rules", name: "rules" }];
+const FALLBACK_VOICE_CHANNELS = [{ id: "lounge", name: "Lounge" }];
 
 function channelIdFromName(name: string) {
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 28);
@@ -50,8 +52,9 @@ export default function CommunityServer() {
   const server = useMemo(() => servers.find((item) => item.id === serverId) ?? null, [serverId, servers]);
   const isStaff = isStaffRole(role);
   const canManage = !!server && !!user && (server.ownerId === user.uid || isStaff);
-  const textChannels = server?.textChannels?.length ? server.textChannels : [{ id: "general", name: "general" }, { id: "rules", name: "rules" }];
-  const voiceChannels = server?.voiceChannels?.length ? server.voiceChannels : [{ id: "lounge", name: "Lounge" }];
+  const textChannels = useMemo(() => server?.textChannels?.length ? server.textChannels : FALLBACK_TEXT_CHANNELS, [server?.textChannels]);
+  const voiceChannels = useMemo(() => server?.voiceChannels?.length ? server.voiceChannels : FALLBACK_VOICE_CHANNELS, [server?.voiceChannels]);
+  const serverRules = Array.isArray(server?.rules) ? server.rules : [];
   const selectedChannel = textChannels.find((item) => item.id === channelId) ?? textChannels[0];
   const bannedUserIds = server?.bannedUserIds ?? [];
   const bannedNames = server?.bannedUsernames ?? [];
@@ -221,7 +224,7 @@ export default function CommunityServer() {
             {selectedChannel?.id === "rules" ? (
               <div className="min-h-[700px]">
                 <header className="flex h-[49px] items-center gap-2 border-b border-black/35 bg-[#313338] px-5 shadow-sm shadow-black/20"><ShieldCheck size={19} className="text-white/45"/><h2 className="font-bold text-white">rules</h2></header>
-                <div className="mx-auto max-w-2xl px-6 py-12"><span className="grid h-16 w-16 place-items-center rounded-full bg-brand-500/15 text-brand-200"><ShieldCheck size={30}/></span><h2 className="mt-5 text-2xl font-black text-white">Welcome to {server.name}</h2><p className="mt-2 text-sm leading-6 text-white/45">{server.description}</p><div className="mt-8 space-y-3">{server.rules.map((rule, index) => <div key={`${index}-${rule}`} className="flex gap-3 rounded-xl border border-white/[.07] bg-white/[.025] p-4"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand-500/15 font-mono text-xs font-black text-brand-200">{index + 1}</span><p className="pt-1 text-sm leading-5 text-white/70">{rule}</p></div>)}</div></div>
+                <div className="mx-auto max-w-2xl px-6 py-12"><span className="grid h-16 w-16 place-items-center rounded-full bg-brand-500/15 text-brand-200"><ShieldCheck size={30}/></span><h2 className="mt-5 text-2xl font-black text-white">Welcome to {server.name}</h2><p className="mt-2 text-sm leading-6 text-white/45">{server.description}</p><div className="mt-8 space-y-3">{serverRules.length ? serverRules.map((rule, index) => <div key={`${index}-${rule}`} className="flex gap-3 rounded-xl border border-white/[.07] bg-white/[.025] p-4"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand-500/15 font-mono text-xs font-black text-brand-200">{index + 1}</span><p className="pt-1 text-sm leading-5 text-white/70">{rule}</p></div>) : <p className="rounded-xl border border-white/[.07] bg-white/[.025] p-4 text-sm text-white/45">No rules posted yet.</p>}</div></div>
               </div>
             ) : (
               <CommunityServerChat key={`${server.id}:${selectedChannel?.id}`} server={server} embedded channelId={selectedChannel?.id ?? "general"} channelName={selectedChannel?.name ?? "general"} />
