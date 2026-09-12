@@ -18,6 +18,25 @@ const roleOptions: CommunityServerRole[] = ["member", "mod", "admin"];
 const FALLBACK_TEXT_CHANNELS = [{ id: "general", name: "general" }, { id: "rules", name: "rules" }];
 const FALLBACK_VOICE_CHANNELS = [{ id: "lounge", name: "Lounge" }];
 
+function safeText(value: unknown, fallback = "") {
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
+function initial(value: unknown, fallback = "S") {
+  return safeText(value, fallback).slice(0, 1).toUpperCase();
+}
+
+function safeChannels(channels: unknown, fallback: { id: string; name: string }[]) {
+  if (!Array.isArray(channels)) return fallback;
+  const cleaned = channels
+    .map((channel) => ({
+      id: safeText((channel as { id?: unknown }).id),
+      name: safeText((channel as { name?: unknown }).name),
+    }))
+    .filter((channel) => channel.id && channel.name);
+  return cleaned.length ? cleaned : fallback;
+}
+
 function channelIdFromName(name: string) {
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 28);
   return slug || `channel-${Date.now().toString(36)}`;
@@ -52,9 +71,13 @@ export default function CommunityServer() {
   const server = useMemo(() => servers.find((item) => item.id === serverId) ?? null, [serverId, servers]);
   const isStaff = isStaffRole(role);
   const canManage = !!server && !!user && (server.ownerId === user.uid || isStaff);
-  const textChannels = useMemo(() => server?.textChannels?.length ? server.textChannels : FALLBACK_TEXT_CHANNELS, [server?.textChannels]);
-  const voiceChannels = useMemo(() => server?.voiceChannels?.length ? server.voiceChannels : FALLBACK_VOICE_CHANNELS, [server?.voiceChannels]);
-  const serverRules = Array.isArray(server?.rules) ? server.rules : [];
+  const serverName = safeText(server?.name, "Server");
+  const ownerName = safeText(server?.ownerName, "Unknown");
+  const serverDescription = safeText(server?.description, "No description yet.");
+  const inviteCode = safeText(server?.inviteCode, "NO-CODE");
+  const textChannels = useMemo(() => safeChannels(server?.textChannels, FALLBACK_TEXT_CHANNELS), [server?.textChannels]);
+  const voiceChannels = useMemo(() => safeChannels(server?.voiceChannels, FALLBACK_VOICE_CHANNELS), [server?.voiceChannels]);
+  const serverRules = Array.isArray(server?.rules) ? server.rules.filter((rule): rule is string => typeof rule === "string" && !!rule.trim()) : [];
   const selectedChannel = textChannels.find((item) => item.id === channelId) ?? textChannels[0];
   const bannedUserIds = server?.bannedUserIds ?? [];
   const bannedNames = server?.bannedUsernames ?? [];
@@ -65,7 +88,7 @@ export default function CommunityServer() {
   const members = useMemo(() => memberIds.map((id) => profiles.find((profile) => profile.id === id)).filter((item): item is UserProfile => !!item), [memberIds, profiles]);
   const onlineMembers = useMemo(() => members.filter(isOnline).sort((a, b) => b.lastActiveAt - a.lastActiveAt), [members]);
   const isBannedHere = !!user && (!!server?.bannedUserIds?.includes(user.uid) || [myProfile?.displayName, myProfile?.username].filter(Boolean).some((name) => bannedNames.map((item) => item.toLowerCase()).includes(String(name).toLowerCase())));
-  const inviteUrl = typeof window === "undefined" || !server ? "" : `${window.location.origin}/chat-servers/${server.id}?invite=${server.inviteCode}`;
+  const inviteUrl = typeof window === "undefined" || !server ? "" : `${window.location.origin}/chat-servers/${server.id}?invite=${inviteCode}`;
   const linkedMinecraftServer = useMemo(() => minecraftServers.find((item) => item.id === server?.linkedMinecraftServerId) ?? null, [minecraftServers, server?.linkedMinecraftServerId]);
   const linkedMinecraftCode = useMemo(() => (linkedMinecraftServer?.code ?? []).map(getIcon), [linkedMinecraftServer?.code]);
   const linkedMinecraftCodeText = linkedMinecraftCode.map((icon) => icon.label).join(" • ");
@@ -86,7 +109,7 @@ export default function CommunityServer() {
 
   function findProfile(raw: string) {
     const lookup = raw.trim().replace(/^@/, "").toLowerCase();
-    return profiles.find((profile) => profile.displayName.toLowerCase() === lookup || profile.username?.toLowerCase() === lookup) ?? null;
+    return profiles.find((profile) => safeText(profile.displayName).toLowerCase() === lookup || safeText(profile.username).toLowerCase() === lookup) ?? null;
   }
 
   async function saveAppearance() {
@@ -164,7 +187,7 @@ export default function CommunityServer() {
 
   async function joinVoice(channel: { id: string; name: string }) {
     if (!server || !user || !myProfile || isBannedHere) return;
-    const fullId = await ensureCommunityVoiceChannel(server.id, channel.id, `${server.name} / ${channel.name}`, user.uid, myProfile.displayName || "Member");
+    const fullId = await ensureCommunityVoiceChannel(server.id, channel.id, `${serverName} / ${channel.name}`, user.uid, safeText(myProfile.displayName, "Member"));
     if (voice.joinedChannelId === fullId) {
       voice.leave();
       return;
@@ -190,7 +213,7 @@ export default function CommunityServer() {
             <div className="my-3 h-px bg-white/10" />
             <div className="space-y-2">
               {servers.slice(0, 14).map((item) => (
-                <Link key={item.id} to={`/chat-servers/${item.id}`} title={item.name} className={`cursor-target grid h-12 w-12 place-items-center overflow-hidden rounded-[24px] text-sm font-black transition-all hover:rounded-2xl ${item.id === server.id ? "rounded-2xl bg-[#5865f2] text-white" : "bg-[#2b2d31] text-white/80 hover:bg-[#5865f2]"}`}>{item.iconUrl ? <img src={item.iconUrl} alt="" className="h-full w-full object-cover"/> : item.name.slice(0,1).toUpperCase()}</Link>
+                <Link key={item.id} to={`/chat-servers/${item.id}`} title={safeText(item.name, "Server")} className={`cursor-target grid h-12 w-12 place-items-center overflow-hidden rounded-[24px] text-sm font-black transition-all hover:rounded-2xl ${item.id === server.id ? "rounded-2xl bg-[#5865f2] text-white" : "bg-[#2b2d31] text-white/80 hover:bg-[#5865f2]"}`}>{item.iconUrl ? <img src={item.iconUrl} alt="" className="h-full w-full object-cover"/> : initial(item.name)}</Link>
               ))}
             </div>
           </aside>
@@ -198,8 +221,8 @@ export default function CommunityServer() {
             <div className="border-b border-black/40 px-3 py-3 shadow-sm shadow-black/20">
               <div className="flex items-center gap-3">
                 <Link to="/chat-servers" aria-label="Back to servers" className="cursor-target grid h-8 w-8 shrink-0 place-items-center rounded-lg text-white/45 hover:bg-white/10 hover:text-white"><ArrowLeft size={15}/></Link>
-                {server.iconUrl ? <img src={server.iconUrl} alt="" className="h-9 w-9 rounded-xl object-cover"/> : <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#5865f2]/20 font-mono text-sm font-black text-white">{server.name.slice(0, 1).toUpperCase()}</span>}
-                <div className="min-w-0"><p className="truncate text-sm font-bold text-white">{server.name}</p><p className="truncate text-[11px] text-white/35">by {server.ownerName}</p></div>
+                {server.iconUrl ? <img src={server.iconUrl} alt="" className="h-9 w-9 rounded-xl object-cover"/> : <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#5865f2]/20 font-mono text-sm font-black text-white">{initial(serverName)}</span>}
+                <div className="min-w-0"><p className="truncate text-sm font-bold text-white">{serverName}</p><p className="truncate text-[11px] text-white/35">by {ownerName}</p></div>
                 {canManage && <button type="button" onClick={() => setSettingsOpen((value) => !value)} className="ml-auto grid h-8 w-8 place-items-center rounded-lg text-white/45 hover:bg-white/10 hover:text-white"><Settings size={15}/></button>}
               </div>
             </div>
@@ -224,7 +247,7 @@ export default function CommunityServer() {
             {selectedChannel?.id === "rules" ? (
               <div className="min-h-[700px]">
                 <header className="flex h-[49px] items-center gap-2 border-b border-black/35 bg-[#313338] px-5 shadow-sm shadow-black/20"><ShieldCheck size={19} className="text-white/45"/><h2 className="font-bold text-white">rules</h2></header>
-                <div className="mx-auto max-w-2xl px-6 py-12"><span className="grid h-16 w-16 place-items-center rounded-full bg-brand-500/15 text-brand-200"><ShieldCheck size={30}/></span><h2 className="mt-5 text-2xl font-black text-white">Welcome to {server.name}</h2><p className="mt-2 text-sm leading-6 text-white/45">{server.description}</p><div className="mt-8 space-y-3">{serverRules.length ? serverRules.map((rule, index) => <div key={`${index}-${rule}`} className="flex gap-3 rounded-xl border border-white/[.07] bg-white/[.025] p-4"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand-500/15 font-mono text-xs font-black text-brand-200">{index + 1}</span><p className="pt-1 text-sm leading-5 text-white/70">{rule}</p></div>) : <p className="rounded-xl border border-white/[.07] bg-white/[.025] p-4 text-sm text-white/45">No rules posted yet.</p>}</div></div>
+                <div className="mx-auto max-w-2xl px-6 py-12"><span className="grid h-16 w-16 place-items-center rounded-full bg-brand-500/15 text-brand-200"><ShieldCheck size={30}/></span><h2 className="mt-5 text-2xl font-black text-white">Welcome to {serverName}</h2><p className="mt-2 text-sm leading-6 text-white/45">{serverDescription}</p><div className="mt-8 space-y-3">{serverRules.length ? serverRules.map((rule, index) => <div key={`${index}-${rule}`} className="flex gap-3 rounded-xl border border-white/[.07] bg-white/[.025] p-4"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand-500/15 font-mono text-xs font-black text-brand-200">{index + 1}</span><p className="pt-1 text-sm leading-5 text-white/70">{rule}</p></div>) : <p className="rounded-xl border border-white/[.07] bg-white/[.025] p-4 text-sm text-white/45">No rules posted yet.</p>}</div></div>
               </div>
             ) : (
               <CommunityServerChat key={`${server.id}:${selectedChannel?.id}`} server={server} embedded channelId={selectedChannel?.id ?? "general"} channelName={selectedChannel?.name ?? "general"} />
@@ -232,8 +255,8 @@ export default function CommunityServer() {
           </main>
 
           <aside className="hidden overflow-y-auto border-l border-black/40 bg-[#2b2d31] p-4 lg:block">
-            <div><p className="text-xs font-bold uppercase tracking-wide text-white/35">About</p><p className="mt-3 text-sm leading-6 text-[#b5bac1]">{server.description}</p></div>
-            <div className="mt-5 rounded-xl border border-white/[.07] bg-black/15 p-3"><button type="button" onClick={() => { void navigator.clipboard?.writeText(inviteUrl); setNotice("Invite link copied."); }} className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2 text-xs font-bold text-white hover:bg-brand-400"><Copy size={13}/>Copy invite</button><p className="mt-2 truncate text-center font-mono text-[10px] text-white/30">{server.inviteCode}</p></div>
+            <div><p className="text-xs font-bold uppercase tracking-wide text-white/35">About</p><p className="mt-3 text-sm leading-6 text-[#b5bac1]">{serverDescription}</p></div>
+            <div className="mt-5 rounded-xl border border-white/[.07] bg-black/15 p-3"><button type="button" onClick={() => { void navigator.clipboard?.writeText(inviteUrl); setNotice("Invite link copied."); }} className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2 text-xs font-bold text-white hover:bg-brand-400"><Copy size={13}/>Copy invite</button><p className="mt-2 truncate text-center font-mono text-[10px] text-white/30">{inviteCode}</p></div>
             <div className="mt-5 rounded-xl border border-white/[.07] bg-black/15 p-3">
               <p className="font-mono text-[10px] font-bold uppercase tracking-[.16em] text-white/28">Minecraft Education</p>
               {linkedMinecraftServer ? (
@@ -253,7 +276,7 @@ export default function CommunityServer() {
                 </div>
               ) : <p className="mt-3 text-xs leading-5 text-white/35">{canManage ? "Link one in settings to show live MC Edu status and join code." : "No Minecraft server linked yet."}</p>}
             </div>
-            <div className="mt-6 border-t border-white/[.08] pt-5"><p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-white/35"><Users size={12}/>Members — {members.length}</p><div className="mt-3 space-y-1">{members.map((profile) => <button key={profile.id} type="button" onClick={() => setOpenProfileId(profile.id)} className="cursor-target flex w-full items-center gap-2.5 rounded px-2 py-1.5 text-left hover:bg-white/[.06]">{profile.photoUrl ? <img src={profile.photoUrl} alt="" className="h-8 w-8 rounded-full object-cover"/> : <span className="grid h-8 w-8 place-items-center rounded-full bg-white/[.07] text-[10px] font-bold text-white/65">{profile.displayName.slice(0,1).toUpperCase()}</span>}<span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-[#dbdee1]">{profile.displayName}</span><span className="block text-[10px] uppercase text-white/30">{roleFor(profile)}</span></span><StatusDot status={getPresenceStatus(profile)}/></button>)}</div></div>
+            <div className="mt-6 border-t border-white/[.08] pt-5"><p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-white/35"><Users size={12}/>Members — {members.length}</p><div className="mt-3 space-y-1">{members.map((profile) => { const profileName = safeText(profile.displayName || profile.username, "Member"); return <button key={profile.id} type="button" onClick={() => setOpenProfileId(profile.id)} className="cursor-target flex w-full items-center gap-2.5 rounded px-2 py-1.5 text-left hover:bg-white/[.06]">{profile.photoUrl ? <img src={profile.photoUrl} alt="" className="h-8 w-8 rounded-full object-cover"/> : <span className="grid h-8 w-8 place-items-center rounded-full bg-white/[.07] text-[10px] font-bold text-white/65">{initial(profileName, "M")}</span>}<span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-[#dbdee1]">{profileName}</span><span className="block text-[10px] uppercase text-white/30">{roleFor(profile)}</span></span><StatusDot status={getPresenceStatus(profile)}/></button>; })}</div></div>
             <div className="mt-6 border-t border-white/[.08] pt-5"><p className="text-xs font-bold uppercase tracking-wide text-white/35">Online — {onlineMembers.length}</p></div>
           </aside>
         </div>
