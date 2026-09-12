@@ -140,7 +140,7 @@ export default function CreateServer() {
             <input type="checkbox" checked={hasShop} onChange={(event) => setHasShop(event.target.checked)} className="h-4 w-4 accent-brand-500" />
             <span>
               <span className="block text-sm font-semibold text-white">Does this server have a shop system?</span>
-              <span className="mt-1 block text-xs text-white/45">Sell in-world items for eduShare Credits and fulfill purchases for your players.</span>
+              <span className="mt-1 block text-xs text-white/45">Sell in-world items for SpawnDex Credits and fulfill purchases for your players.</span>
             </span>
           </label>
 

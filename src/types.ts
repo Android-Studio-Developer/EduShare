@@ -50,7 +50,9 @@ export type Rank =
   | "mod"
   | "admin"
   | "owner"
-  | "partner";
+  | "partner"
+  | "advertiser"
+  | "builder";
 
 export interface ChatMessage {
   id: string;
@@ -60,6 +62,9 @@ export interface ChatMessage {
   authorRank?: Rank;
   authorPhotoUrl?: string;
   isBot?: boolean;
+  botId?: string;
+  triggeredById?: string;
+  deliveryState?: "sending" | "sent";
   createdAt: number;
   pinned?: boolean;
   reactions?: Record<string, string[]>;
@@ -69,9 +74,123 @@ export interface ChatMessage {
   fileType?: string;
   fileSize?: number;
   replyToId?: string;
+  replyToAuthorId?: string;
   replyToAuthor?: string;
   replyToText?: string;
+  replyPing?: boolean;
   poll?: { question: string; options: string[]; votes: Record<string, string[]> };
+  youtubeId?: string;
+}
+
+export type DeveloperApplicationStatus = "pending" | "approved" | "rejected";
+
+export interface DeveloperApplication {
+  id: string;
+  userId: string;
+  applicantName: string;
+  applicantEmail: string;
+  experience: string;
+  motivation: string;
+  botIdea: string;
+  safetyPlan: string;
+  dataPlan: string;
+  status: DeveloperApplicationStatus;
+  createdAt: number;
+  reviewedAt?: number;
+  reviewedBy?: string;
+}
+
+export interface DeveloperBotCommand {
+  name: string;
+  response: string;
+  action?: "reply" | "verify";
+}
+
+export interface DeveloperBot {
+  id: string;
+  ownerId: string;
+  ownerName: string;
+  name: string;
+  handle: string;
+  description: string;
+  avatarUrl: string;
+  enabled: boolean;
+  verificationEnabled: boolean;
+  prefix: string;
+  commands: DeveloperBotCommand[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface DeveloperBotEvent {
+  id: string;
+  botId: string;
+  command: string;
+  invokedById: string;
+  invokedByName: string;
+  status: "success" | "unknown_command" | "rate_limited" | "failed";
+  latencyMs: number;
+  createdAt: number;
+}
+
+export interface LoginEvent {
+  id: string;
+  userId: string;
+  method: "password" | "google" | "signup";
+  device: string;
+  browser?: string;
+  os?: string;
+  createdAt: number;
+}
+
+export interface OwnerLoginAudit extends LoginEvent {
+  email: string;
+  ipAddress: string;
+}
+
+export interface DeveloperAuditEvent {
+  id: string;
+  actorId: string;
+  actorName: string;
+  botOwnerId: string;
+  botId: string;
+  botName: string;
+  action: "bot_created" | "bot_updated" | "bot_deleted" | "application_approved" | "application_rejected";
+  createdAt: number;
+}
+
+export type CommunityServerRole = "owner" | "admin" | "mod" | "member";
+
+export interface CommunityServerTextChannel {
+  id: string;
+  name: string;
+}
+
+export interface CommunityServerVoiceChannel {
+  id: string;
+  name: string;
+}
+
+export interface CommunityChatServer {
+  id: string;
+  name: string;
+  description: string;
+  rules: string[];
+  ownerId: string;
+  ownerName: string;
+  iconUrl: string;
+  bannerUrl: string;
+  linkedMinecraftServerId: string;
+  inviteCode: string;
+  memberIds: string[];
+  bannedUserIds: string[];
+  bannedUsernames: string[];
+  roles: Record<string, CommunityServerRole>;
+  textChannels: CommunityServerTextChannel[];
+  voiceChannels: CommunityServerVoiceChannel[];
+  boostCount: number;
+  lastBoostedAt: number;
+  createdAt: number;
 }
 
 export interface DmMessage {
@@ -93,6 +212,21 @@ export interface DmMessage {
   fileSize?: number;
 }
 
+export interface DmConversation {
+  id: string;
+  participants: string[];
+  createdAt: number;
+  lastMessageAt: number;
+  lastMessageText: string;
+  lastMessageAuthorId: string;
+  isGroup?: boolean;
+  name?: string;
+  ownerId?: string;
+  iconUrl?: string;
+  callStartedAt?: number;
+  callStartedBy?: string;
+}
+
 export type ActivityType = "server_created" | "code_unlocked" | "chat_message";
 
 export interface ActivityEvent {
@@ -104,7 +238,7 @@ export interface ActivityEvent {
   createdAt: number;
 }
 
-export type SiteRole = "owner" | "moderator" | "member";
+export type SiteRole = "owner" | "moderator" | "headmod" | "actor" | "dabug" | "member";
 
 export interface ModeratorApplication {
   id: string;
@@ -192,12 +326,38 @@ export interface DisputeMessage {
 export interface SiteNotification {
   id: string;
   recipientId: string;
-  type: "moderation" | "report" | "system" | "mention" | "dm" | "donation";
+  type: "moderation" | "report" | "system" | "mention" | "dm" | "donation" | "game" | "event";
   title: string;
   message: string;
   link: string;
   read: boolean;
   createdAt: number;
+}
+
+export interface CommunityEventParticipant {
+  id: string;
+  name: string;
+  photoUrl: string;
+}
+
+export interface CommunityEvent {
+  id: string;
+  hostId: string;
+  hostName: string;
+  hostPhotoUrl: string;
+  title: string;
+  description: string;
+  link: string;
+  creditPrize: number;
+  participantIds: string[];
+  participants: CommunityEventParticipant[];
+  status: "active" | "finished" | "cancelled";
+  winnerId: string;
+  winnerName: string;
+  payoutClaimed: boolean;
+  createdAt: number;
+  endsAt: number;
+  finishedAt: number;
 }
 
 export interface UserProfile {
@@ -207,6 +367,7 @@ export interface UserProfile {
   usernameLower: string;
   photoUrl: string;
   bannerUrl: string;
+  backgroundUrl: string;
   bannerEffect: string;
   bio: string;
   favoriteGames: string;
@@ -216,11 +377,54 @@ export interface UserProfile {
   playMinutes: number;
   banned: boolean;
   lastActiveAt: number;
+  presenceStatus: PresenceStatus;
+  customStatus: string;
+  activityGame: string;
+  activityStartedAt: number;
+  customEmojis: CustomEmoji[];
   botXp: number;
   lastGameAt: number;
   lastActivityReward: number;
   partyId: string;
   guildId: string;
+  cosmeticPackOwned: boolean;
+  bedwarsRating: number;
+  bedwarsWins: number;
+  bedwarsLosses: number;
+  ownedCosmetics: string[];
+  nameFont: string;
+  nameEffect: string;
+  nameplateEffect: string;
+  nameColor: string;
+  pfpEffect: string;
+  profileEffect: string;
+  referredBy: string;
+  referralRewardPending: number;
+  buildHelpPending: number;
+  buildHelpCredits: number;
+  // Invisible — no UI shows this exists unless you're the owner. Gates access
+  // to the voice changer. Only the owner account can grant it, not mods.
+  voiceUnlocked: boolean;
+  verifiedBotIds: string[];
+  lastVerifiedBotId: string;
+}
+
+export interface CustomEmoji {
+  id: string;
+  name: string;
+  url: string;
+  fileId: string;
+}
+
+export type PresenceStatus = "online" | "idle" | "dnd" | "invisible";
+
+export interface AdvertiserRequest {
+  id: string;
+  userId: string;
+  userName: string;
+  message: string;
+  status: "open" | "accepted" | "declined";
+  createdAt: number;
 }
 
 export type GroupNameEffect = "none" | "chroma";
@@ -239,6 +443,11 @@ export interface Party {
 export interface Guild {
   id: string;
   name: string;
+  tag?: string;
+  tagIcon?: GuildTagIcon;
+  tagFont?: GuildTagFont;
+  tagImageUrl?: string;
+  tagColor?: string;
   ownerId: string;
   ownerName: string;
   coOwnerId: string;
@@ -249,6 +458,9 @@ export interface Guild {
   createdAt: number;
 }
 
+export type GuildTagIcon = "leaf" | "swords" | "heart" | "flame" | "droplet" | "skull" | "moon" | "zap" | "sparkles" | "mushroom";
+export type GuildTagFont = "mono" | "poppins" | "playfair" | "comic" | "handwritten" | "bungee" | "pixel";
+
 export type FriendRequestStatus = "pending" | "accepted" | "declined";
 
 export interface VoiceChannelDoc {
@@ -258,6 +470,10 @@ export interface VoiceChannelDoc {
   createdByName: string;
   createdAt: number;
   isDefault: boolean;
+  staffOnly?: boolean;
+  lastActivityAt?: number;
+  bedwarsLobbyId?: string;
+  bedwarsTeam?: BedwarsTeam;
 }
 
 export interface VoiceParticipant {
@@ -268,6 +484,24 @@ export interface VoiceParticipant {
   muted: boolean;
   joinedAt: number;
   lastSeenAt: number;
+}
+
+export interface VoiceChatMessage {
+  id: string;
+  authorId: string;
+  authorName: string;
+  authorPhotoUrl: string;
+  text: string;
+  broadcastTts?: boolean;
+  createdAt: number;
+}
+
+export interface MovieSignup {
+  id: string;
+  displayName: string;
+  photoUrl: string;
+  note: string;
+  createdAt: number;
 }
 
 export type VoiceSignalType = "offer" | "answer" | "candidate";
@@ -321,6 +555,7 @@ export interface WordleDuel {
   invitedId: string;
   invitedName: string;
   answer: string;
+  bet: number;
   hostGuesses: WordleDuelGuess[];
   guestGuesses: WordleDuelGuess[];
   status: WordleDuelStatus;
@@ -329,6 +564,64 @@ export interface WordleDuel {
   createdAt: number;
   startedAt: number;
   finishedAt: number;
+  hostPayoutClaimed: boolean;
+  guestPayoutClaimed: boolean;
+}
+
+export type ChessDuelStatus = "waiting" | "active" | "finished" | "cancelled";
+export type ChessColor = "w" | "b";
+export type ChessResult = "" | "white" | "black" | "draw";
+export type ChessTimeControl = "blitz_5_3" | "rapid_10";
+
+export interface ChessDuelMove {
+  from: string;
+  to: string;
+  promotion: "q" | "r" | "b" | "n";
+  san: string;
+  byId: string;
+  createdAt: number;
+}
+
+export interface ChessDuel {
+  id: string;
+  whiteId: string;
+  whiteName: string;
+  whitePhotoUrl: string;
+  blackId: string;
+  blackName: string;
+  blackPhotoUrl: string;
+  invitedId: string;
+  invitedName: string;
+  fen: string;
+  moves: ChessDuelMove[];
+  turn: ChessColor;
+  check: boolean;
+  status: ChessDuelStatus;
+  result: ChessResult;
+  winnerId: string;
+  winnerName: string;
+  endReason: string;
+  creditBet: number;
+  timeControl?: ChessTimeControl;
+  initialTimeMs?: number;
+  incrementMs?: number;
+  whiteTimeMs?: number;
+  blackTimeMs?: number;
+  turnStartedAt?: number;
+  whitePayoutClaimed: boolean;
+  blackPayoutClaimed: boolean;
+  createdAt: number;
+  startedAt: number;
+  finishedAt: number;
+}
+
+export interface ChessRoomMessage {
+  id: string;
+  authorId: string;
+  authorName: string;
+  authorPhotoUrl: string;
+  text: string;
+  createdAt: number;
 }
 
 export interface WordleSpectator {
@@ -336,6 +629,53 @@ export interface WordleSpectator {
   displayName: string;
   photoUrl: string;
   lastSeenAt: number;
+}
+
+export type PropertyGameStatus = "waiting" | "active" | "finished" | "cancelled";
+export type PropertyGamePhase = "roll" | "buy" | "end";
+
+export interface PropertyGamePlayer {
+  id: string;
+  name: string;
+  photoUrl: string;
+  token: string;
+  position: number;
+  cash: number;
+  properties: string[];
+  inDetention: boolean;
+  detentionTurns: number;
+  bankrupt: boolean;
+}
+
+export interface PropertyGameLogEntry {
+  id: string;
+  text: string;
+  createdAt: number;
+}
+
+export interface PropertyGameRoom {
+  id: string;
+  hostId: string;
+  hostName: string;
+  maxPlayers: number;
+  startingCash: number;
+  playerIds: string[];
+  players: PropertyGamePlayer[];
+  status: PropertyGameStatus;
+  currentPlayerIndex: number;
+  phase: PropertyGamePhase;
+  pendingPropertyId: string;
+  lastDice: number[];
+  lastCardTitle: string;
+  lastCardText: string;
+  winnerId: string;
+  winnerName: string;
+  deckIndex: number;
+  turnNumber: number;
+  log: PropertyGameLogEntry[];
+  createdAt: number;
+  startedAt: number;
+  finishedAt: number;
 }
 
 export interface FriendRequest {
@@ -383,6 +723,21 @@ export interface ServerAnnouncement {
 
 export type ShareType = "world" | "mod" | "addon";
 
+export type MemeVisibility = "public" | "private";
+
+export interface MemePost {
+  id: string;
+  authorId: string;
+  authorName: string;
+  authorPhotoUrl: string;
+  imageUrl: string;
+  caption: string;
+  visibility: MemeVisibility;
+  recipientId: string;
+  recipientName: string;
+  createdAt: number;
+}
+
 export interface SharedFile {
   id: string;
   name: string;
@@ -393,6 +748,57 @@ export interface SharedFile {
   authorId: string;
   authorName: string;
   downloadCount: number;
+  price: number;
+  createdAt: number;
+}
+
+export type BedwarsTeam = "a" | "b";
+export type BedwarsMode = "bedfight" | "1v1" | "3v3" | "4v4";
+
+export interface BedwarsQueueEntry {
+  uid: string;
+  displayName: string;
+  elo: number;
+  partyId: string;
+  lobbyCode: string;
+  mode: BedwarsMode;
+  queuedAt: number;
+}
+
+export interface BedwarsLobbyPlayer {
+  uid: string;
+  name: string;
+  elo: number;
+  team: BedwarsTeam;
+}
+
+export type BedwarsLobbyStatus =
+  | "voting"
+  | "role_select"
+  | "in_progress"
+  | "awaiting_review"
+  | "scored"
+  | "rejected"
+  | "cancelled";
+
+export interface BedwarsLobby {
+  id: string;
+  playerIds: string[];
+  players: BedwarsLobbyPlayer[];
+  mode: BedwarsMode;
+  status: BedwarsLobbyStatus;
+  mapOptions: string[];
+  mapVotes: Record<string, string>;
+  chosenMap: string;
+  roles: Record<string, string>;
+  voiceChannelAId: string;
+  voiceChannelBId: string;
+  screenshotUrl: string;
+  winningTeamClaim: BedwarsTeam | "";
+  topKillerId: string;
+  submittedBy: string;
+  reviewedBy: string;
+  reviewedAt: number;
   createdAt: number;
 }
 

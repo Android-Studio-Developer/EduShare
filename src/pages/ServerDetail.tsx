@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowLeft, BadgeCheck, Flag, Gamepad2, ScrollText, ShoppingBag, User, Users } from "lucide-react";
+import { isStaffRole } from "../lib/moderation";
 import { recordJoin, recordVisit, setServerVerified, subscribeToServer } from "../lib/servers";
 import type { MinecraftServer } from "../types";
 import { useAuth } from "../context/AuthContext";
@@ -68,7 +69,7 @@ export default function ServerDetail() {
               <FavoriteButton serverId={server.id} />
             </div>
             <h1 className="mt-3 flex items-center gap-2 font-mono text-2xl font-bold text-white">{server.name}{server.isVerified && <BadgeCheck size={21} className="text-sky-400" aria-label="Verified server" />}</h1>
-            {(role === "owner" || role === "moderator") && <button type="button" onClick={() => setServerVerified(server.id, !server.isVerified)} className="cursor-target mt-2 text-xs text-sky-400 hover:underline">{server.isVerified ? "Remove verification" : "Verify ownership/original map"}</button>}
+            {isStaffRole(role) && <button type="button" onClick={() => setServerVerified(server.id, !server.isVerified)} className="cursor-target mt-2 text-xs text-sky-400 hover:underline">{server.isVerified ? "Remove verification" : "Verify ownership/original map"}</button>}
             <p className="mt-2 text-sm text-white/60">{server.description}</p>
           </div>
         </div>
@@ -91,7 +92,7 @@ export default function ServerDetail() {
           </div>
         </div>
 
-        <ServerOperations server={server} canManage={user?.uid === server.ownerId || (!!user && (server.managerIds ?? []).includes(user.uid)) || role === "owner" || role === "moderator"} />
+        <ServerOperations server={server} canManage={user?.uid === server.ownerId || (!!user && (server.managerIds ?? []).includes(user.uid)) || isStaffRole(role)} />
 
         {user?.uid === server.ownerId ? (
           <OwnerCodePanel serverId={server.id} serverName={server.name} code={server.code} isOnline={!!server.isOnline} />

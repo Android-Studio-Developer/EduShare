@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { BarChart3, MessageCircle, Minus, Plus, Send, Trash2, X } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { deleteMessage, sendMessage, subscribeToMessages, voteServerPoll } from "../lib/chat";
-import { flagDeletedMessage } from "../lib/moderation";
+import { flagDeletedMessage, isStaffRole } from "../lib/moderation";
 import { subscribeToProfile } from "../lib/profiles";
 import { rankNameClass } from "../lib/ranks";
 import type { ChatMessage, Rank } from "../types";
@@ -38,6 +38,11 @@ export default function ServerChat({
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [filterMessage, setFilterMessage] = useState("");
+  useEffect(() => {
+    if (!filterMessage) return;
+    const timer = window.setTimeout(() => setFilterMessage(""), 6_000);
+    return () => window.clearTimeout(timer);
+  }, [filterMessage]);
   const [myRank, setMyRank] = useState<Rank>("none");
   const [myProfileName, setMyProfileName] = useState("");
   const [openProfileId, setOpenProfileId] = useState<string | null>(null);
@@ -69,7 +74,7 @@ export default function ServerChat({
   }, [messages.length]);
 
   async function handleDelete(m: ChatMessage) {
-    const isStaffRemoval = (role === "owner" || role === "moderator") && user?.uid !== m.authorId;
+    const isStaffRemoval = isStaffRole(role) && user?.uid !== m.authorId;
     await deleteMessage(serverId, m.id);
     if (isStaffRemoval && user) {
       await flagDeletedMessage({
@@ -231,7 +236,7 @@ export default function ServerChat({
                   <p className="text-sm break-words text-white/70 [overflow-wrap:anywhere]">{m.text}</p>
                 )}
               </div>
-              {(role === "owner" || role === "moderator" || user?.uid === m.authorId) && (
+              {(isStaffRole(role) || user?.uid === m.authorId) && (
                 <button
                   type="button"
                   onClick={() => handleDelete(m)}
@@ -306,7 +311,7 @@ export default function ServerChat({
               </Button>
             </form>
           )}
-          {filterMessage && <p className="mt-2 text-xs text-amber-300">{filterMessage}</p>}
+          {filterMessage && <p className="chat-system-notice mt-2 text-xs text-amber-300">{filterMessage}</p>}
         </div>
       ) : (
         <div className="border-t border-border p-4 text-center text-xs text-white/40">

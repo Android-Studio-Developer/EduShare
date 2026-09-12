@@ -11,16 +11,19 @@ import {
   deleteReportedServer,
   subscribeToFlaggedMessages,
   dismissFlaggedMessage,
+  isStaffRole,
 } from "../lib/moderation";
 import { formatBanRemaining, getApplicationBanRemaining, screenModeratorApplication } from "../lib/aiModeration";
 import { resolveRecoveryRequest, subscribeToRecoveryRequests } from "../lib/accountRecovery";
 import { acceptPartnerRequest, declinePartnerRequest, subscribeToPartnerRequests } from "../lib/partnerRequests";
-import type { AccountRecoveryRequest, FlaggedMessage, ModeratorApplication, PartnerRequest, ServerReport } from "../types";
+import { acceptAdvertiserRequest, declineAdvertiserRequest, subscribeToAdvertiserRequests } from "../lib/advertiser";
+import type { AccountRecoveryRequest, AdvertiserRequest, FlaggedMessage, ModeratorApplication, PartnerRequest, ServerReport } from "../types";
 import Button from "../components/Button";
+import OwnerLoginAuditPanel from "../components/OwnerLoginAuditPanel";
 
 const QUESTIONS = [
   ["experience", "What moderation or community experience do you have?"],
-  ["motivation", "Why do you want to moderate eduShare?"],
+  ["motivation", "Why do you want to moderate SpawnDex?"],
   ["conflictResponse", "How would you handle an argument or inappropriate chat message?"],
   ["duplicateMapResponse", "Two servers appear to use the same map. How would you investigate fairly?"],
   ["availability", "When and how often can you help moderate?"],
@@ -40,6 +43,7 @@ export default function Moderation() {
   const [recoveryRequests, setRecoveryRequests] = useState<AccountRecoveryRequest[]>([]);
   const [partnerRequests, setPartnerRequests] = useState<PartnerRequest[]>([]);
   const [perksDraft, setPerksDraft] = useState<Record<string, string>>({});
+  const [advertiserRequests, setAdvertiserRequests] = useState<AdvertiserRequest[]>([]);
 
   useEffect(() => {
     if (role !== "owner") return;
@@ -47,12 +51,12 @@ export default function Moderation() {
   }, [role]);
 
   useEffect(() => {
-    if (role !== "owner" && role !== "moderator") return;
+    if (!isStaffRole(role)) return;
     return subscribeToReports(setReports);
   }, [role]);
 
   useEffect(() => {
-    if (role !== "owner" && role !== "moderator") return;
+    if (!isStaffRole(role)) return;
     return subscribeToFlaggedMessages(setFlags);
   }, [role]);
 
@@ -64,6 +68,11 @@ export default function Moderation() {
   useEffect(() => {
     if (role !== "owner") return;
     return subscribeToPartnerRequests(setPartnerRequests);
+  }, [role]);
+
+  useEffect(() => {
+    if (!isStaffRole(role)) return;
+    return subscribeToAdvertiserRequests(setAdvertiserRequests);
   }, [role]);
 
   async function acceptPartner(request: PartnerRequest) {
@@ -180,6 +189,27 @@ export default function Moderation() {
     </section>
   );
 
+  const openAdvertiserRequests = advertiserRequests.filter((r) => r.status === "open");
+  const advertiserPanel = (
+    <section className="mt-10">
+      <h2 className="font-mono text-xl font-bold text-white">Advertiser requests</h2>
+      <p className="mt-1 text-xs text-white/40">Accepting grants the requester the Advertiser rank and queues a 530-credit reward on their 3 referred accounts.</p>
+      <div className="mt-4 space-y-3">
+        {openAdvertiserRequests.length === 0 && <p className="rounded-xl border border-dashed border-border p-10 text-center text-white/35">No open requests.</p>}
+        {openAdvertiserRequests.map((request) => (
+          <article key={request.id} className="rounded-xl border border-border bg-surface p-5">
+            <p className="font-mono font-bold text-white">{request.userName}</p>
+            <p className="mt-3 text-sm text-white/65">{request.message}</p>
+            <div className="mt-3 flex gap-2">
+              <Button size="sm" onClick={() => void acceptAdvertiserRequest(request)}>Accept & make Advertiser</Button>
+              <Button size="sm" variant="ghost" onClick={() => declineAdvertiserRequest(request.id)}>Decline</Button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+
   const openRecoveryRequests = recoveryRequests.filter((r) => r.status === "open");
   const recoveryPanel = (
     <section className="mt-10">
@@ -206,12 +236,12 @@ export default function Moderation() {
     </section>
   );
 
-  if (role === "moderator") {
+  if (role === "moderator" || role === "actor" || role === "headmod") {
     return (
       <div className="mx-auto max-w-4xl px-6 py-14">
         <div className="text-center">
         <Shield size={36} className="mx-auto text-brand-400" />
-        <h1 className="mt-4 font-mono text-2xl font-bold text-white">Moderator access active</h1>
+        <h1 className="mt-4 font-mono text-2xl font-bold text-white">{role === "actor" ? "Actor access active" : role === "headmod" ? "Head Moderator access active" : "Moderator access active"}</h1>
         <p className="mt-2 text-white/50">You can remove inappropriate chat messages and help review server reports.</p>
         </div>
         {reportPanel}
@@ -256,7 +286,9 @@ export default function Moderation() {
         {reportPanel}
         {flagPanel}
         {partnerPanel}
+        {advertiserPanel}
         {recoveryPanel}
+        {user && <OwnerLoginAuditPanel ownerId={user.uid} />}
       </div>
     );
   }

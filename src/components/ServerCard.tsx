@@ -1,82 +1,49 @@
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { BadgeCheck, Blocks, Gamepad2, ScrollText, Users } from "lucide-react";
+import { ArrowUpRight, BadgeCheck, Blocks, Users } from "lucide-react";
 import type { MinecraftServer } from "../types";
-import BorderGlow from "./BorderGlow";
-import StatusBadge from "./StatusBadge";
 
 export default function ServerCard({ server, index = 0 }: { server: MinecraftServer; index?: number }) {
-  const categoryColors: Record<string, string> = {
-    SMP: "from-emerald-400/25 to-cyan-400/15 text-emerald-200 border-emerald-300/25",
-    Bedwars: "from-red-400/25 to-orange-400/15 text-orange-200 border-orange-300/25",
-    PvP: "from-rose-400/25 to-fuchsia-400/15 text-rose-200 border-rose-300/25",
-    Skyblock: "from-sky-400/25 to-violet-400/15 text-sky-200 border-sky-300/25",
-    "Creative Build": "from-fuchsia-400/25 to-pink-400/15 text-fuchsia-200 border-fuchsia-300/25",
-    Survival: "from-lime-400/25 to-emerald-400/15 text-lime-200 border-lime-300/25",
-    Minigames: "from-amber-400/25 to-pink-400/15 text-amber-200 border-amber-300/25",
-    "Redstone & Coding": "from-orange-400/25 to-red-400/15 text-orange-200 border-orange-300/25",
-  };
+  const image = server.imageUrls?.[0] || server.imageUrl;
+
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 18 }}
+    <motion.article
+      initial={{ opacity: 0, y: 10 }}
       whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-40px" }}
-      transition={{ duration: 0.4, delay: Math.min(index * 0.05, 0.4) }}
-      whileHover={{ y: -4 }}
-      className="h-full"
+      viewport={{ once: true, margin: "-30px" }}
+      transition={{ duration: 0.35, delay: Math.min(index * 0.035, 0.2) }}
+      className="h-full bg-surface"
     >
-      <BorderGlow
-        backgroundColor="#11152d"
-        borderRadius={16}
-        glowRadius={28}
-        glowColor="258 90% 76%"
-        colors={["#6690ff", "#94a3b8", "#a3e635"]}
-        className="h-full"
-      >
-        <Link to={`/server/${server.id}`} className="cursor-target flex h-full flex-col">
-          <div className="relative">
-            {(server.imageUrls?.[0] || server.imageUrl) ? (
-              <img
-                src={server.imageUrls?.[0] || server.imageUrl}
-                alt={server.name}
-                className="aspect-video w-full rounded-t-[16px] object-cover"
-              />
-            ) : (
-              <div className="bg-grid flex aspect-video w-full items-center justify-center rounded-t-[16px] bg-surface-2">
-                <Blocks size={28} className="text-white/15" />
-              </div>
-            )}
-            <div className="absolute top-2.5 right-2.5">
-              <StatusBadge online={!!server.isOnline} />
-            </div>
-          </div>
+      <Link to={`/server/${server.id}`} className="cursor-target group flex h-full flex-col p-4 transition-colors hover:bg-white/[.025]">
+        <div className="relative overflow-hidden rounded-lg bg-surface-2">
+          {image ? (
+            <img src={image} alt="" className="aspect-[16/9] w-full object-cover transition-transform duration-500 group-hover:scale-[1.025]" />
+          ) : (
+            <div className="bg-grid flex aspect-[16/9] items-center justify-center"><Blocks size={25} className="text-white/14" /></div>
+          )}
+          <span className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-md bg-[#0d100e]/85 px-2 py-1 text-[10px] font-semibold text-white/75 backdrop-blur-sm">
+            <i className={`h-1.5 w-1.5 rounded-full ${server.isOnline ? "bg-emerald-400" : "bg-white/30"}`} />
+            {server.isOnline ? "Online" : "Offline"}
+          </span>
+        </div>
 
-          <div className="flex flex-1 flex-col justify-between p-5">
-            <div>
-              <div className="mb-3 flex items-center justify-between">
-                <span className={`rounded-full border bg-gradient-to-r px-2.5 py-1 font-mono text-xs font-semibold ${categoryColors[server.subject] ?? "from-violet-400/25 to-cyan-400/15 text-violet-200 border-violet-300/25"}`}>
-                  {server.subject}
-                </span>
-                <span className="flex items-center gap-1 text-xs text-white/40">
-                  <Gamepad2 size={13} /> {server.edition}
-                </span>
-              </div>
-              <h3 className="flex items-center gap-1.5 font-mono text-lg font-bold text-white">{server.name}{server.isVerified && <BadgeCheck size={17} className="shrink-0 text-sky-400" aria-label="Verified server" />}</h3>
-              <p className="mt-1.5 line-clamp-2 text-sm text-white/55">{server.description}</p>
+        <div className="flex flex-1 flex-col px-1 pb-1 pt-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[.13em] text-white/34">{server.subject} · {server.edition}</p>
+              <h3 className="mt-2 flex items-center gap-1.5 truncate text-lg font-semibold tracking-[-.025em] text-white">
+                {server.name}{server.isVerified && <BadgeCheck size={16} className="shrink-0 text-brand-300" aria-label="Verified server" />}
+              </h3>
             </div>
-
-            <div className="mt-5 flex items-center justify-between border-t border-border pt-4 text-xs text-white/45">
-              <span className="flex items-center gap-1.5">
-                <Users size={13} /> up to {server.maxPlayers}
-              </span>
-              <span className="flex items-center gap-1.5">
-                <ScrollText size={13} /> {server.rules.length} rules
-              </span>
-              <span>by {server.ownerName}</span>
-            </div>
+            <ArrowUpRight size={16} className="mt-1 shrink-0 text-white/25 transition-colors group-hover:text-brand-300" />
           </div>
-        </Link>
-      </BorderGlow>
-    </motion.div>
+          <p className="mt-2 line-clamp-2 text-sm leading-6 text-white/48">{server.description}</p>
+          <div className="mt-auto flex items-center justify-between border-t border-white/[.07] pt-4 text-xs text-white/34">
+            <span className="flex items-center gap-1.5"><Users size={13} /> Up to {server.maxPlayers}</span>
+            <span className="truncate pl-3">by {server.ownerName}</span>
+          </div>
+        </div>
+      </Link>
+    </motion.article>
   );
 }

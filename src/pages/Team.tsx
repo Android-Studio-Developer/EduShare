@@ -1,10 +1,10 @@
-import { Crown, Shield, Users } from "lucide-react";
+import { Bug, Crown, Handshake, Popcorn, Shield, Sparkles, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import ProfileCard from "../components/ProfileCard";
 import RankBadge from "../components/RankBadge";
 import StatusDot from "../components/StatusDot";
 import { subscribeToStaffRoles, type StaffMember } from "../lib/moderation";
-import { isOnline, subscribeToAllProfiles } from "../lib/profiles";
+import { getPresenceStatus, PRESENCE_LABELS, subscribeToAllProfiles } from "../lib/profiles";
 import { rankNameClass } from "../lib/ranks";
 import type { UserProfile } from "../types";
 
@@ -32,11 +32,31 @@ export default function Team() {
     [staff, profileById],
   );
 
-  const MemberCard = ({ member, staffRole }: { member: UserProfile; staffRole: "owner" | "moderator" }) => (
+  const headmods = useMemo(
+    () => staff.filter((s) => s.role === "headmod").map((s) => profileById.get(s.id)).filter((p): p is UserProfile => !!p),
+    [staff, profileById],
+  );
+
+  const actors = useMemo(
+    () => staff.filter((s) => s.role === "actor").map((s) => profileById.get(s.id)).filter((p): p is UserProfile => !!p),
+    [staff, profileById],
+  );
+
+  const dabugs = useMemo(
+    () => staff.filter((s) => s.role === "dabug").map((s) => profileById.get(s.id)).filter((p): p is UserProfile => !!p),
+    [staff, profileById],
+  );
+
+  const partners = useMemo(
+    () => profiles.filter((profile) => profile.rank === "partner"),
+    [profiles],
+  );
+
+  const MemberCard = ({ member, staffRole }: { member: UserProfile; staffRole: "owner" | "moderator" | "headmod" | "actor" | "dabug" | "partner" }) => (
     <button
       type="button"
       onClick={() => setOpenProfileId(member.id)}
-      className="cursor-target group flex w-full items-center gap-4 rounded-2xl border border-white/10 bg-white/[.035] p-4 text-left transition hover:border-white/20 hover:bg-white/[.055]"
+      className={`cursor-target group flex w-full items-center gap-4 rounded-2xl border border-white/10 bg-white/[.035] p-4 text-left transition hover:border-white/20 hover:bg-white/[.055] ${staffRole === "headmod" ? "headmod-card-glow" : ""}`}
     >
       <div className="relative shrink-0">
         {member.photoUrl ? (
@@ -51,25 +71,33 @@ export default function Team() {
           </div>
         )}
         <StatusDot
-          online={isOnline(member)}
+          status={getPresenceStatus(member)}
           className="absolute -bottom-0.5 -right-0.5"
         />
       </div>
 
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className={`truncate font-mono text-base font-bold ${rankNameClass(member.rank)}`}>
+          <span className={`truncate font-mono text-base font-bold ${staffRole === "headmod" ? "text-chroma" : rankNameClass(member.rank)}`}>
             {member.displayName || "Unnamed user"}
           </span>
           {staffRole === "owner" ? (
             <Crown size={14} className="shrink-0 text-amber-300" />
+          ) : staffRole === "partner" ? (
+            <Handshake size={14} className="shrink-0 text-emerald-300" />
+          ) : staffRole === "dabug" ? (
+            <Bug size={14} className="shrink-0 text-fuchsia-300" />
+          ) : staffRole === "actor" ? (
+            <Popcorn size={14} className="shrink-0 text-orange-300" />
+          ) : staffRole === "headmod" ? (
+            <Sparkles size={14} className="text-chroma-icon shrink-0" />
           ) : (
             <Shield size={14} className="shrink-0 text-sky-300" />
           )}
           <RankBadge rank={member.rank} />
         </div>
         <p className="mt-1 text-xs text-white/40">
-          {isOnline(member) ? "Online now" : "Currently offline"}
+          {PRESENCE_LABELS[getPresenceStatus(member)]}
         </p>
       </div>
     </button>
@@ -83,10 +111,10 @@ export default function Team() {
             <Users size={23} />
           </div>
           <div>
-            <p className="font-mono text-xs uppercase tracking-[.2em] text-brand-300/80">eduShare Team</p>
+            <p className="font-mono text-xs uppercase tracking-[.2em] text-brand-300/80">SpawnDex Team</p>
             <h1 className="mt-1 font-mono text-3xl font-bold text-white">Who runs this website?</h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-white/50">
-              These are the current owner and moderators of eduShare. The list updates automatically when staff ranks change.
+              Meet the owner, moderators, and verified partners who support the SpawnDex community. The list updates automatically when roles change.
             </p>
           </div>
         </div>
@@ -97,7 +125,7 @@ export default function Team() {
           <Crown size={19} className="text-amber-300" />
           <div>
             <h2 className="font-mono text-lg font-bold text-white">Website Owner</h2>
-            <p className="text-xs text-white/35">The person responsible for eduShare.</p>
+            <p className="text-xs text-white/35">The person responsible for SpawnDex.</p>
           </div>
         </div>
 
@@ -114,10 +142,21 @@ export default function Team() {
 
       <section className="mt-10">
         <div className="mb-4 flex items-center gap-2">
+          <Bug size={19} className="text-fuchsia-300" />
+          <div>
+            <h2 className="font-mono text-lg font-bold text-white">Dabug</h2>
+            <p className="text-xs text-white/35">Trusted bot testers with debugger access and no moderation powers.</p>
+          </div>
+        </div>
+        {dabugs.length === 0 ? <div className="rounded-2xl border border-dashed border-white/10 px-5 py-7 text-sm text-white/30">No Dabug members are currently assigned.</div> : <div className="grid gap-3 sm:grid-cols-2">{dabugs.map((member) => <MemberCard key={member.id} member={member} staffRole="dabug" />)}</div>}
+      </section>
+
+      <section className="mt-10">
+        <div className="mb-4 flex items-center gap-2">
           <Shield size={19} className="text-sky-300" />
           <div>
             <h2 className="font-mono text-lg font-bold text-white">Moderators</h2>
-            <p className="text-xs text-white/35">Community staff who help keep eduShare safe and welcoming.</p>
+            <p className="text-xs text-white/35">Community staff who help keep SpawnDex safe and welcoming.</p>
           </div>
         </div>
 
@@ -128,6 +167,66 @@ export default function Team() {
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {moderators.map((member) => <MemberCard key={member.id} member={member} staffRole="moderator" />)}
+          </div>
+        )}
+      </section>
+
+      <section className="mt-10">
+        <div className="mb-4 flex items-center gap-2">
+          <Sparkles size={19} className="text-chroma-icon" />
+          <div>
+            <h2 className="font-mono text-lg font-bold text-white">Head Moderators</h2>
+            <p className="text-xs text-white/35">Senior moderators recognized for consistently great work.</p>
+          </div>
+        </div>
+
+        {headmods.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-white/10 px-5 py-7 text-sm text-white/30">
+            No head moderators are currently listed.
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {headmods.map((member) => <MemberCard key={member.id} member={member} staffRole="headmod" />)}
+          </div>
+        )}
+      </section>
+
+      <section className="mt-10">
+        <div className="mb-4 flex items-center gap-2">
+          <Popcorn size={19} className="text-orange-300" />
+          <div>
+            <h2 className="font-mono text-lg font-bold text-white">Actors</h2>
+            <p className="text-xs text-white/35">Movie Drop cast members — same staff permissions as a moderator.</p>
+          </div>
+        </div>
+
+        {actors.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-white/10 px-5 py-7 text-sm text-white/30">
+            No actors are currently listed.
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {actors.map((member) => <MemberCard key={member.id} member={member} staffRole="actor" />)}
+          </div>
+        )}
+      </section>
+
+      <section className="mt-10">
+        <div className="mb-4 flex items-center gap-2">
+          <Handshake size={19} className="text-emerald-300" />
+          <div>
+            <h2 className="font-mono text-lg font-bold text-white">Partners</h2>
+            <p className="text-xs text-white/35">Verified community partners working with SpawnDex.</p>
+          </div>
+        </div>
+
+        {partners.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-white/10 px-5 py-7 text-sm text-white/30">
+            No partners are currently listed.
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {partners.map((member) => <MemberCard key={member.id} member={member} staffRole="partner" />)}
           </div>
         )}
       </section>

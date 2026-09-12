@@ -1,6 +1,6 @@
 import { arrayRemove, arrayUnion, collection, deleteDoc, doc, getDoc, onSnapshot, orderBy, query, updateDoc, writeBatch } from "firebase/firestore";
 import { db } from "./firebase";
-import type { Guild, GroupNameEffect } from "../types";
+import type { Guild, GuildTagFont, GuildTagIcon, GroupNameEffect } from "../types";
 
 export const GUILD_MAX_MEMBERS = 100;
 
@@ -24,6 +24,11 @@ export async function createGuild(userId: string, ownerName: string, name: strin
   const batch = writeBatch(db);
   batch.set(ref, {
     name: trimmed,
+    tag: "",
+    tagIcon: "leaf",
+    tagFont: "mono",
+    tagImageUrl: "",
+    tagColor: "#86efac",
     ownerId: userId,
     ownerName,
     coOwnerId: "",
@@ -73,6 +78,15 @@ export function renameGuild(guildId: string, name: string) {
   const trimmed = name.trim().slice(0, 40);
   if (!trimmed) throw new Error("Give your guild a name.");
   return updateDoc(doc(db, "guilds", guildId), { name: trimmed });
+}
+
+export function setGuildTag(guildId: string, tag: string, tagIcon: GuildTagIcon, tagFont: GuildTagFont, tagImageUrl = "", tagColor = "#86efac") {
+  const normalized = tag.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5);
+  const rawImageUrl = tagImageUrl.trim().replace(/^embed:/i, "");
+  if (rawImageUrl && !/^https?:\/\//i.test(rawImageUrl)) throw new Error("Badge image must use an http(s) URL.");
+  const safeColor = /^#[0-9a-f]{6}$/i.test(tagColor) ? tagColor : "#86efac";
+  const safeIcon: GuildTagIcon = (["leaf","swords","heart","flame","droplet","skull","moon","zap","sparkles","mushroom"] as string[]).includes(tagIcon) ? tagIcon : "leaf";
+  return updateDoc(doc(db, "guilds", guildId), { tag: normalized, tagIcon: safeIcon, tagFont, tagImageUrl: rawImageUrl.slice(0, 1000), tagColor: safeColor });
 }
 
 export function clearGuildPointer(userId: string) {

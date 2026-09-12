@@ -1,0 +1,22 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "eduShare PvP Effects",
+    "description": "Die and lose one random active effect. Get a kill and gain a random effect at amplifier 1-6.",
+    "uuid": "199fb9f1-17a0-48c2-9a8c-91e6be44c01e",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 20, 60]
+  },
+  "modules": [
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "12cb0f49-678b-4566-b21c-35139ff412d1",
+      "version": [1, 0, 0],
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [
+    { "module_name": "@minecraft/server", "version": "1.13.0" }
+  ]
+}

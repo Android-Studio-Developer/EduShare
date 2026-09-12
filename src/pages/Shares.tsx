@@ -1,7 +1,9 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { Blocks, Download, Globe2, Plus, Puzzle, Trash2, Wrench } from "lucide-react";
+import { Blocks, Coins, Download, Globe2, Plus, Puzzle, Tag, Trash2, Wrench } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { createShare, deleteShare, isHttpsUrl, recordDownload, subscribeToShares } from "../lib/shares";
+import { isStaffRole } from "../lib/moderation";
+import { createShare, deleteShare, isHttpsUrl, priceWithCode, purchaseShare, recordDownload, SHARE_DISCOUNT_CODE, SHARE_PRICE, subscribeToShares } from "../lib/shares";
+import { ensureWallet, subscribeToBalance } from "../lib/shop";
 import type { SharedFile, ShareType } from "../types";
 import Button from "../components/Button";
 
@@ -14,7 +16,7 @@ const TYPE_ICON: Record<ShareType, ReactNode> = {
 
 export default function Shares() {
   const { user, role } = useAuth();
-  const isStaff = role === "owner" || role === "moderator";
+  const isStaff = isStaffRole(role);
   const [shares, setShares] = useState<SharedFile[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
@@ -22,10 +24,21 @@ export default function Shares() {
   const [type, setType] = useState<ShareType>("world");
   const [downloadUrl, setDownloadUrl] = useState("");
   const [imageUrl, setImageUrl] = useState("");
+  const [price, setPrice] = useState(String(SHARE_PRICE));
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [balance, setBalance] = useState(0);
+  const [promoCode, setPromoCode] = useState("");
+  const [purchasedIds, setPurchasedIds] = useState<Set<string>>(new Set());
+  const [purchasingId, setPurchasingId] = useState<string | null>(null);
+  const [buyMessage, setBuyMessage] = useState("");
 
   useEffect(() => subscribeToShares(setShares), []);
+  useEffect(() => {
+    if (!user) return;
+    void ensureWallet(user.uid);
+    return subscribeToBalance(user.uid, setBalance);
+  }, [user]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -45,8 +58,9 @@ export default function Shares() {
         imageUrl: imageUrl.trim(),
         authorId: user.uid,
         authorName: user.displayName ?? "Player",
+        price: Number(price) || 0,
       });
-      setName(""); setDescription(""); setDownloadUrl(""); setImageUrl(""); setType("world"); setShowForm(false);
+      setName(""); setDescription(""); setDownloadUrl(""); setImageUrl(""); setType("world"); setPrice(String(SHARE_PRICE)); setShowForm(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not submit.");
     } finally {
@@ -54,9 +68,25 @@ export default function Shares() {
     }
   }
 
-  async function handleDownload(share: SharedFile) {
+  function openDownload(share: SharedFile) {
     void recordDownload(share.id);
     window.open(share.downloadUrl, "_blank", "noopener,noreferrer");
+  }
+
+  async function handleBuy(share: SharedFile) {
+    if (!user) return;
+    const charged = priceWithCode(share.price ?? 150, promoCode);
+    setPurchasingId(share.id);
+    setBuyMessage("");
+    try {
+      await purchaseShare(user.uid, charged);
+      setPurchasedIds((prev) => new Set(prev).add(share.id));
+      openDownload(share);
+    } catch (err) {
+      setBuyMessage(err instanceof Error ? err.message : "Purchase failed.");
+    } finally {
+      setPurchasingId(null);
+    }
   }
 
   async function handleDelete(id: string) {
@@ -78,6 +108,27 @@ export default function Shares() {
           <Plus size={15} /> Share a file
         </Button>
       </div>
+
+      {user && (
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <span className="flex items-center gap-1.5 rounded-full border border-brand-500/30 bg-brand-500/10 px-4 py-2 font-mono text-sm text-brand-300">
+            <Coins size={15} /> {balance} credits
+          </span>
+          <div className="relative">
+            <Tag size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+            <input
+              value={promoCode}
+              onChange={(e) => { setPromoCode(e.target.value); setBuyMessage(""); }}
+              placeholder="Promo code"
+              className="w-40 rounded-full border border-border bg-surface-2 py-2 pl-8 pr-3 text-xs text-white placeholder:text-white/30 focus:border-brand-500/50 focus:outline-none"
+            />
+          </div>
+          {promoCode.trim().toUpperCase() === SHARE_DISCOUNT_CODE && (
+            <span className="font-mono text-xs text-emerald-400">30% off applied!</span>
+          )}
+        </div>
+      )}
+      {buyMessage && <p className="mt-2 text-sm text-red-400">{buyMessage}</p>}
 
       {showForm && (
         <form onSubmit={handleSubmit} className="mt-6 space-y-3 rounded-2xl border border-border bg-surface p-6">
@@ -103,6 +154,10 @@ export default function Shares() {
           <textarea required maxLength={500} rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description" className="w-full rounded-xl border border-border bg-surface-2 px-4 py-3 text-white" />
           <input required value={downloadUrl} onChange={(e) => setDownloadUrl(e.target.value)} placeholder="Download link (https://...)" className="w-full rounded-xl border border-border bg-surface-2 px-4 py-3 text-white" />
           <input type="url" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="Preview image URL (optional)" className="w-full rounded-xl border border-border bg-surface-2 px-4 py-3 text-white" />
+          <div className="relative">
+            <Coins size={15} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-amber-300" />
+            <input required type="number" min={0} max={100000} step={1} value={price} onChange={(e) => setPrice(e.target.value)} placeholder="Price in credits" className="w-full rounded-xl border border-border bg-surface-2 py-3 pl-11 pr-4 text-white" />
+          </div>
           {error && <p className="text-sm text-red-400">{error}</p>}
           <Button type="submit" disabled={submitting} className="w-full">Submit</Button>
         </form>
@@ -118,16 +173,39 @@ export default function Shares() {
             </div>
             <p className="mt-1 flex-1 text-sm text-white/50">{share.description}</p>
             <p className="mt-2 text-xs text-white/35">by {share.authorName} · {share.downloadCount ?? 0} downloads</p>
-            <div className="mt-3 flex items-center gap-2">
-              <Button size="sm" onClick={() => handleDownload(share)} className="flex-1">
-                <Download size={14} /> Download
-              </Button>
-              {(isStaff || share.authorId === user?.uid) && (
-                <Button size="sm" variant="ghost" onClick={() => handleDelete(share.id)} aria-label="Delete">
-                  <Trash2 size={14} />
-                </Button>
-              )}
-            </div>
+            {(() => {
+              const price = share.price ?? 150;
+              const charged = priceWithCode(price, promoCode);
+              const discounted = charged < price;
+              const owned = purchasedIds.has(share.id);
+              return (
+                <>
+                  <p className="mt-2 flex items-center gap-1.5 font-mono text-xs text-amber-300">
+                    <Coins size={13} />
+                    {owned ? "Purchased" : discounted ? (
+                      <span><span className="text-white/30 line-through">{price}</span> {charged} credits</span>
+                    ) : (
+                      <span>{price} credits</span>
+                    )}
+                  </p>
+                  <div className="mt-3 flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => (owned ? openDownload(share) : handleBuy(share))}
+                      disabled={purchasingId === share.id || (!owned && balance < charged)}
+                      className="flex-1"
+                    >
+                      <Download size={14} /> {owned ? "Download" : purchasingId === share.id ? "Buying..." : `Buy for ${charged}`}
+                    </Button>
+                    {(isStaff || share.authorId === user?.uid) && (
+                      <Button size="sm" variant="ghost" onClick={() => handleDelete(share.id)} aria-label="Delete">
+                        <Trash2 size={14} />
+                      </Button>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
           </article>
         ))}
         {shares.length === 0 && (

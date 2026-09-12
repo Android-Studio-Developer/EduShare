@@ -11,7 +11,7 @@ export default function FirebaseSetupNotice() {
           <h1 className="font-mono text-lg font-bold text-white">Firebase isn't configured yet</h1>
         </div>
         <p className="text-sm leading-relaxed text-white/60">
-          eduShare needs a Firebase project for sign-up, login, and server
+          SpawnDex needs a Firebase project for sign-up, login, and server
           storage. Copy <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-brand-300">.env.example</code> to{" "}
           <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-brand-300">.env</code>, fill in your
           Firebase web app config, then restart <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-brand-300">npm run dev</code>.

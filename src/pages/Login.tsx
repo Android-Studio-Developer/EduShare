@@ -1,17 +1,15 @@
 import { useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { motion } from "framer-motion";
-import { LogIn } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, KeyRound, Mail, Orbit } from "lucide-react";
 import { FcGoogle } from "react-icons/fc";
 import { useAuth } from "../context/AuthContext";
-import Button from "../components/Button";
+import AuthShell from "../components/AuthShell";
 
 export default function Login() {
   const { logIn, logInWithGoogle, resetPassword } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const from = (location.state as { from?: Location })?.from?.pathname ?? "/";
-
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -20,161 +18,83 @@ export default function Login() {
   const [resetMode, setResetMode] = useState(false);
   const [resetSent, setResetSent] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   async function handleReset(e: FormEvent) {
     e.preventDefault();
     setError("");
     setResetLoading(true);
-    try {
-      await resetPassword(email);
-      setResetSent(true);
-    } catch {
-      // Firebase intentionally doesn't reveal whether the email exists —
-      // show the same success state either way so this can't be used to
-      // probe which emails are registered.
-      setResetSent(true);
-    } finally {
-      setResetLoading(false);
-    }
+    try { await resetPassword(email); setResetSent(true); }
+    catch { setResetSent(true); }
+    finally { setResetLoading(false); }
   }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError("");
     setLoading(true);
-    try {
-      await logIn(email, password);
-      navigate(from, { replace: true });
-    } catch {
-      setError("Couldn't log you in — check your email and password.");
-    } finally {
-      setLoading(false);
-    }
+    try { await logIn(email, password); navigate(from, { replace: true }); }
+    catch { setError("Couldn't log you in — check your email and password."); }
+    finally { setLoading(false); }
   }
 
   async function handleGoogle() {
     setError("");
     setGoogleLoading(true);
-    try {
-      await logInWithGoogle();
-      navigate(from, { replace: true });
-    } catch {
-      setError("Couldn't sign in with Google. Try again.");
-    } finally {
-      setGoogleLoading(false);
-    }
+    try { await logInWithGoogle(); navigate(from, { replace: true }); }
+    catch { setError("Couldn't sign in with Google. Try again."); }
+    finally { setGoogleLoading(false); }
   }
 
   return (
-    <div className="mx-auto flex min-h-[75vh] max-w-md flex-col justify-center px-6 py-16">
-      <motion.div
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="rounded-2xl border border-border bg-surface p-8"
-      >
-        <div className="mb-6 flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/15 text-brand-400">
-            <LogIn size={17} />
-          </div>
-          <h1 className="font-mono text-xl font-bold text-white">Welcome back</h1>
-        </div>
-
-        <button
-          type="button"
-          onClick={handleGoogle}
-          disabled={googleLoading}
-          className="cursor-target flex w-full items-center justify-center gap-2.5 rounded-xl border border-border bg-surface-2 py-2.5 text-sm font-medium text-white transition-colors hover:border-white/20 hover:bg-surface-2/80 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <FcGoogle size={17} />
-          {googleLoading ? "Signing in..." : "Continue with Google"}
+    <AuthShell
+      eyebrow={resetMode ? "Account recovery" : "Member access"}
+      title={resetMode ? "Reset your password" : "Welcome back"}
+      description={resetMode ? "We'll email you a secure link to get back into your account." : "Pick up where you left off on SpawnDex."}
+      icon={resetMode ? KeyRound : Orbit}
+    >
+      {!resetMode && <>
+        <button type="button" onClick={handleGoogle} disabled={googleLoading} className="cursor-target auth-google-button">
+          <FcGoogle size={18} />{googleLoading ? "Signing in..." : "Continue with Google"}
         </button>
+        <div className="auth-divider"><span>or use email</span></div>
+      </>}
 
-        <div className="my-5 flex items-center gap-3">
-          <div className="h-px flex-1 bg-border" />
-          <span className="font-mono text-[11px] tracking-wider text-white/30 uppercase">or</span>
-          <div className="h-px flex-1 bg-border" />
+      {resetMode ? (resetSent ? (
+        <div className="auth-success">
+          <span><Mail size={22} /></span><strong>Check your inbox</strong>
+          <p>If that email has an SpawnDex account, a reset link is on its way.</p>
+          <button type="button" className="cursor-target auth-secondary-button" onClick={() => { setResetMode(false); setResetSent(false); }}>Back to log in</button>
         </div>
-
-        {resetMode ? (
-          resetSent ? (
-            <div className="space-y-4 text-center">
-              <p className="text-sm text-white/70">If that email has an eduShare account, a reset link is on its way — check your inbox.</p>
-              <Button variant="secondary" className="w-full" onClick={() => { setResetMode(false); setResetSent(false); }}>
-                Back to log in
-              </Button>
-            </div>
-          ) : (
-            <form onSubmit={handleReset} className="space-y-4">
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-white/50">Email</label>
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full rounded-xl border border-border bg-surface-2 px-4 py-2.5 text-sm text-white focus:border-brand-500/50 focus:outline-none"
-                />
-              </div>
-              <Button type="submit" className="w-full" size="lg" disabled={resetLoading}>
-                {resetLoading ? "Sending..." : "Send reset link"}
-              </Button>
-              <button type="button" onClick={() => setResetMode(false)} className="cursor-target block w-full text-center text-sm text-white/45 hover:text-white">
-                Back to log in
-              </button>
-            </form>
-          )
-        ) : (
-          <>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-white/50">Email</label>
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full rounded-xl border border-border bg-surface-2 px-4 py-2.5 text-sm text-white focus:border-brand-500/50 focus:outline-none"
-                />
-              </div>
-              <div>
-                <div className="mb-1.5 flex items-center justify-between">
-                  <label className="block text-xs font-medium text-white/50">Password</label>
-                  <button type="button" onClick={() => setResetMode(true)} className="cursor-target text-xs text-brand-400 hover:underline">
-                    Forgot password?
-                  </button>
-                </div>
-                <input
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full rounded-xl border border-border bg-surface-2 px-4 py-2.5 text-sm text-white focus:border-brand-500/50 focus:outline-none"
-                />
-              </div>
-
-              {error && <p className="text-sm text-red-400">{error}</p>}
-
-              <Button type="submit" className="w-full" size="lg" disabled={loading}>
-                {loading ? "Logging in..." : "Log in"}
-              </Button>
-            </form>
-
-            <p className="mt-4 text-center text-sm text-white/45">
-              Forgot your username?{" "}
-              <Link to="/recover" className="cursor-target font-medium text-brand-400 hover:underline">
-                Request help
-              </Link>
-            </p>
-
-            <p className="mt-3 text-center text-sm text-white/45">
-              New here?{" "}
-              <Link to="/signup" className="cursor-target font-medium text-brand-400 hover:underline">
-                Create an account
-              </Link>
-            </p>
-          </>
-        )}
-      </motion.div>
-    </div>
+      ) : (
+        <form onSubmit={handleReset} className="auth-form">
+          <label className="auth-field"><span>Email address</span>
+            <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" placeholder="you@example.com" />
+          </label>
+          <button type="submit" className="cursor-target auth-primary-button" disabled={resetLoading}>{resetLoading ? "Sending..." : <><span>Send reset link</span><ArrowRight size={17} /></>}</button>
+          <button type="button" onClick={() => setResetMode(false)} className="cursor-target auth-text-button">Back to log in</button>
+        </form>
+      )) : <>
+        <form onSubmit={handleSubmit} className="auth-form">
+          <label className="auth-field"><span>Email address</span>
+            <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" placeholder="you@example.com" />
+          </label>
+          <label className="auth-field">
+            <span className="auth-field-label"><span>Password</span><button type="button" onClick={() => setResetMode(true)} className="cursor-target">Forgot password?</button></span>
+            <span className="auth-password-wrap">
+              <input type={showPassword ? "text" : "password"} required value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" placeholder="Enter your password" />
+              <button type="button" className="cursor-target auth-password-toggle" onClick={() => setShowPassword((shown) => !shown)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button>
+            </span>
+          </label>
+          {error && <p className="auth-error" role="alert">{error}</p>}
+          <button type="submit" className="cursor-target auth-primary-button" disabled={loading}>{loading ? "Logging in..." : <><span>Enter SpawnDex</span><ArrowRight size={17} /></>}</button>
+        </form>
+        <div className="auth-links">
+          <p>Forgot your username? <Link to="/recover" className="cursor-target">Request help</Link></p>
+          <p>New here? <Link to="/signup" className="cursor-target">Create an account</Link></p>
+          <p className="mt-2 text-[10px] text-white/30">Successful logins record email, public IP, browser, and operating system for owner/dabug security review. Passwords and tokens are never logged.</p>
+        </div>
+      </>}
+    </AuthShell>
   );
 }

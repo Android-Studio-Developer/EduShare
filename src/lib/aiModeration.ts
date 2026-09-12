@@ -1,11 +1,15 @@
 import { OWNER_EMAIL } from "./moderation";
+import type { ChatMessage } from "../types";
 
-// Same-origin keeps school networks from calling the AI provider directly and
-// prevents AGNES_API_KEY from ever entering the browser bundle.
-const AGNES_API_ENDPOINT = "/api/chat";
+declare const __AGNES_API_KEY__: string;
+declare const __AGNES_MODEL__: string;
+
+const AGNES_API_ENDPOINT = "https://apihub.agnes-ai.com/v1/chat/completions";
 const BAN_KEY = "edushare-mod-application-ban-until";
 const BAN_DURATION = 2 * 60 * 60 * 1000;
 const CHAT_BAN_PREFIX = "edushare-chat-ban-until:";
+const CHAT_POLICY_VERSION = "2";
+const CHAT_POLICY_KEY = "edushare-chat-policy-version";
 
 interface ScreeningResult {
   spam: boolean;
@@ -13,8 +17,8 @@ interface ScreeningResult {
 }
 
 interface AgnesResponse {
-  text?: string;
-  error?: string;
+  choices?: Array<{ message?: { content?: string } }>;
+  error?: string | { message?: string };
 }
 
 export function getApplicationBanRemaining() {
@@ -51,22 +55,16 @@ const LEET_MAP: Record<string, string> = {
   "!": "i",
 };
 
-const PROFANITY = [
-  "fuck",
-  "shit",
-  "bitch",
-  "asshole",
+// Keep the instant filter deliberately narrow. Ordinary profanity, slang, and
+// insults are moderation/report concerns, but should not make chat unusable.
+// Only unambiguous targeted slurs are blocked before a message is sent.
+const SEVERE_SLURS = [
   "nigger",
   "nigga",
-  "cunt",
-  "whore",
-  "slut",
   "faggot",
-  "retard",
-  "rape",
 ];
 
-function normalizeForProfanity(text: string) {
+function normalizeToken(text: string) {
   return text
     .toLowerCase()
     .split("")
@@ -76,9 +74,9 @@ function normalizeForProfanity(text: string) {
 }
 
 function localProfanityCheck(text: string): ScreeningResult | null {
-  const normalized = normalizeForProfanity(text);
-  const hit = PROFANITY.find((word) => normalized.includes(word));
-  return hit ? { spam: true, reason: `Blocked word detected: "${hit}"` } : null;
+  const tokens = text.toLowerCase().split(/\s+/).map(normalizeToken).filter(Boolean);
+  const hit = SEVERE_SLURS.find((word) => tokens.includes(word));
+  return hit ? { spam: true, reason: "A severe slur was detected" } : null;
 }
 
 async function callAgnesOnce(
@@ -90,11 +88,19 @@ async function callAgnesOnce(
   try {
     response = await fetch(AGNES_API_ENDPOINT, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${__AGNES_API_KEY__}`,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify({
-        message,
-        preamble: options.preamble,
-        temperature: options.temperature,
+        model: __AGNES_MODEL__ || "agnes-2.5-flash",
+        messages: [
+          ...(options.preamble ? [{ role: "system", content: options.preamble }] : []),
+          { role: "user", content: message.slice(0, 4_000) },
+        ],
+        temperature: options.temperature ?? 0.7,
+        max_tokens: 512,
+        stream: false,
       }),
     });
   } catch (error) {
@@ -110,7 +116,7 @@ async function callAgnesOnce(
 
   try {
     const data = (await response.json()) as AgnesResponse;
-    const text = data.text?.trim();
+    const text = data.choices?.[0]?.message?.content?.trim();
     return text || null;
   } catch (error) {
     console.error("Could not parse Agnes API response:", error);
@@ -165,7 +171,7 @@ export async function screenModeratorApplication(
 
   const text = await callAgnes(JSON.stringify(answers), {
     preamble:
-      'You are eduShare\'s moderator-application spam detector. Decide whether the application is spam, a raid, random filler, repeated nonsense, abusive content, or clearly does not answer the questions. Do not reject merely for weak grammar, short sentences, or being young. Return ONLY compact JSON in exactly this shape: {"spam":true|false,"reason":"short explanation"}. Do not use markdown or code fences.',
+      'You are SpawnDex\'s moderator-application spam detector. Decide whether the application is spam, a raid, random filler, repeated nonsense, abusive content, or clearly does not answer the questions. Do not reject merely for weak grammar, short sentences, or being young. Return ONLY compact JSON in exactly this shape: {"spam":true|false,"reason":"short explanation"}. Do not use markdown or code fences.',
     temperature: 0,
   });
 
@@ -189,6 +195,23 @@ export async function askAi(question: string): Promise<string> {
   return text.length > 290 ? `${text.slice(0, 289)}…` : text;
 }
 
+export async function createAmbientChatReply(messages: ChatMessage[]): Promise<string | null> {
+  const recent = messages
+    .filter((message) => !message.fileUrl && !message.poll)
+    .slice(-12)
+    .map((message) => `${message.isBot ? "eduBot" : message.authorName}: ${message.text.replace(/\s+/g, " ").slice(0, 260)}`)
+    .join("\n");
+  if (!recent) return null;
+
+  const text = await callAgnes(recent, {
+    preamble:
+      "You are eduBot participating naturally in SpawnDex Global Chat, a school-friendly Minecraft community. Read the recent conversation. Reply only when you can add something useful, friendly, funny, or directly relevant; otherwise return exactly SKIP. Never claim to be human. Sound casual like a normal chat participant, not like a formal assistant. Use one short plain-text message under 180 characters. Do not use markdown, mention policy, or prefix your name.",
+    temperature: 0.9,
+  });
+  if (!text || /^skip[.!]?$/i.test(text.trim())) return null;
+  return text.replace(/\s+/g, " ").trim().slice(0, 180) || null;
+}
+
 function isOwnerEmail(email?: string | null) {
   return email?.toLowerCase() === OWNER_EMAIL;
 }
@@ -198,6 +221,13 @@ function isOwnerEmail(email?: string | null) {
 // client-side localStorage mute instead of the Firestore banned field.
 export function getChatBanRemaining(userId: string, email?: string | null) {
   if (isOwnerEmail(email)) return 0;
+  // A moderation-policy change must not leave users stuck with a pause issued
+  // by the retired, stricter policy.
+  if (localStorage.getItem(CHAT_POLICY_KEY) !== CHAT_POLICY_VERSION) {
+    localStorage.removeItem(`${CHAT_BAN_PREFIX}${userId}`);
+    localStorage.setItem(CHAT_POLICY_KEY, CHAT_POLICY_VERSION);
+    return 0;
+  }
   return Math.max(
     0,
     Number(localStorage.getItem(`${CHAT_BAN_PREFIX}${userId}`) ?? 0) - Date.now(),
@@ -224,7 +254,7 @@ export async function screenChatMessageRemote(
 ): Promise<ScreeningResult> {
   const text = await callAgnes(message, {
     preamble:
-      'You are eduShare\'s classroom chat safety filter. Flag messages containing harassment, slurs, sexual content, threats, scams, deliberate spam/raids, or personal contact information. Do not flag normal Minecraft discussion, mild disagreement, or harmless slang. Return ONLY compact JSON in exactly this shape: {"spam":true|false,"reason":"short explanation"}. Do not use markdown or code fences.',
+      'You are SpawnDex\'s lightweight chat safety filter. Set spam=true ONLY for high-confidence severe content: targeted identity slurs, credible threats of real-world violence, sexual exploitation of minors, phishing/scams, or a deliberate repeated spam raid. Set spam=false for ordinary profanity, insults, dark jokes without a credible threat, harmless slang, arguments, roleplay, game violence, quoted/discussed words, personal contact details, or anything ambiguous. When uncertain, always allow it. Return ONLY compact JSON in exactly this shape: {"spam":true|false,"reason":"short explanation"}. Do not use markdown or code fences.',
     temperature: 0,
   });
 

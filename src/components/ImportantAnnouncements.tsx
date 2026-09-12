@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Check, Megaphone, Pencil, Send, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, ChevronUp, Megaphone, Pencil, Send, Trash2, X } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { isStaffRole } from "../lib/moderation";
 import {
   deleteImportantAnnouncement,
   postImportantAnnouncement,
@@ -29,12 +30,17 @@ export default function ImportantAnnouncements() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [saving, setSaving] = useState(false);
+  const [expanded, setExpanded] = useState(() => localStorage.getItem("edushare-announcements-expanded") === "true");
 
-  const canManage = role === "owner" || role === "moderator";
+  const canManage = isStaffRole(role);
 
   useEffect(() => {
     return subscribeToImportantAnnouncements(setItems);
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem("edushare-announcements-expanded", String(expanded));
+  }, [expanded]);
 
   async function submitAnnouncement() {
     if (!user || !canManage) return;
@@ -51,7 +57,10 @@ export default function ImportantAnnouncements() {
         authorId: user.uid,
         authorName:
           user.displayName?.trim() || (role === "owner" ? "Owner" : "Moderator"),
-        authorRole: role,
+        // Firestore rules only recognize authorRole 'owner'/'moderator' here —
+        // actor carries moderator-equivalent permission, so it posts as
+        // 'moderator' rather than needing a rules change for a third literal.
+        authorRole: role === "owner" ? "owner" : "moderator",
       });
       setText("");
       setComposerOpen(false);
@@ -100,7 +109,7 @@ export default function ImportantAnnouncements() {
   return (
     <section className="mx-auto max-w-6xl px-6 pt-6 sm:pt-8">
       <div className="overflow-hidden rounded-2xl border border-amber-300/25 bg-gradient-to-br from-amber-500/[.12] via-orange-500/[.07] to-red-500/[.08] shadow-[0_18px_60px_rgba(245,158,11,.08)]">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200/10 px-4 py-3 sm:px-5">
+        <div className={`flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5 ${expanded ? "border-b border-amber-200/10" : ""}`}>
           <div className="flex items-center gap-2.5">
             <span className="grid h-9 w-9 place-items-center rounded-xl border border-amber-300/25 bg-amber-400/10 text-amber-300">
               <Megaphone size={18} />
@@ -112,24 +121,46 @@ export default function ImportantAnnouncements() {
                 </h2>
                 <AlertTriangle size={14} className="text-amber-300" />
               </div>
-              <p className="text-xs text-amber-100/45">Official eduShare staff updates</p>
+              <p className="max-w-[min(64vw,42rem)] truncate text-xs text-amber-100/45">
+                {expanded || items.length === 0 ? "Official SpawnDex staff updates" : items[0].text.replace(/\s+/g, " ")}
+              </p>
             </div>
           </div>
 
-          {canManage && (
+          <div className="flex items-center gap-2">
+            {canManage && (
+              <button
+                type="button"
+                onClick={() => {
+                  setError("");
+                  setExpanded(true);
+                  setComposerOpen((open) => !open);
+                }}
+                className="cursor-target rounded-lg border border-amber-300/25 bg-amber-400/10 px-3 py-1.5 font-mono text-xs font-semibold text-amber-100 transition hover:bg-amber-400/15"
+              >
+                {composerOpen ? "Cancel" : "+ New announcement"}
+              </button>
+            )}
             <button
               type="button"
+              aria-expanded={expanded}
+              aria-controls="important-announcements-content"
               onClick={() => {
-                setError("");
-                setComposerOpen((open) => !open);
+                setExpanded((open) => !open);
+                if (expanded) {
+                  setComposerOpen(false);
+                  setEditingId(null);
+                }
               }}
-              className="cursor-target rounded-lg border border-amber-300/25 bg-amber-400/10 px-3 py-1.5 font-mono text-xs font-semibold text-amber-100 transition hover:bg-amber-400/15"
+              className="cursor-target inline-flex items-center gap-1.5 rounded-lg border border-amber-300/20 bg-black/10 px-3 py-1.5 font-mono text-xs font-semibold text-amber-100/75 transition hover:bg-amber-400/10 hover:text-amber-100"
             >
-              {composerOpen ? "Cancel" : "+ New announcement"}
+              {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              {expanded ? "Collapse" : `Show${items.length ? ` (${Math.min(items.length, 5)})` : ""}`}
             </button>
-          )}
+          </div>
         </div>
 
+        <div id="important-announcements-content" hidden={!expanded}>
         {composerOpen && canManage && (
           <div className="border-b border-amber-200/10 p-4 sm:p-5">
             <div className="flex items-start gap-2">
@@ -251,6 +282,7 @@ export default function ImportantAnnouncements() {
             ))}
           </div>
         )}
+        </div>
       </div>
     </section>
   );

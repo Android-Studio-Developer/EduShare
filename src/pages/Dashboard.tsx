@@ -10,8 +10,8 @@ import type { MinecraftServer } from "../types";
 import Button from "../components/Button";
 import { getIcon } from "../lib/icons";
 import { markShopNotificationRead, subscribeToShopNotifications } from "../lib/shop";
-import { submitPartnerRequest } from "../lib/partnerRequests";
-import type { ShopNotification } from "../types";
+import { submitPartnerRequest, subscribeToMyPartnerRequests } from "../lib/partnerRequests";
+import type { PartnerRequest, ShopNotification } from "../types";
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -24,6 +24,7 @@ export default function Dashboard() {
   const [partnerContact, setPartnerContact] = useState("");
   const [partnerStatus, setPartnerStatus] = useState("");
   const [partnerSubmitting, setPartnerSubmitting] = useState(false);
+  const [partnerRequests, setPartnerRequests] = useState<PartnerRequest[]>([]);
 
   useEffect(() => {
     if (!user) return;
@@ -37,6 +38,11 @@ export default function Dashboard() {
   useEffect(() => {
     if (!user) return;
     return subscribeToShopNotifications(user.uid, setShopNotifications);
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    return subscribeToMyPartnerRequests(user.uid, setPartnerRequests);
   }, [user]);
 
   async function handleCopy(id: string, code: string[]) {
@@ -62,7 +68,7 @@ export default function Dashboard() {
     setPartnerStatus("");
     try {
       await submitPartnerRequest(user.uid, partnerRequestFor.id, partnerRequestFor.name, partnerMessage, partnerContact);
-      setPartnerStatus("Sent! The eduShare owner will review it.");
+      setPartnerStatus("Sent! The SpawnDex owner will review it.");
       setPartnerMessage("");
       setPartnerContact("");
     } catch (error) {
@@ -117,7 +123,11 @@ export default function Dashboard() {
         </div>
       ) : (
         <div className="space-y-3">
-          {servers.map((server, i) => (
+          {servers.map((server, i) => {
+            const latestPartnerRequest = partnerRequests
+              .filter((request) => request.serverId === server.id)
+              .sort((a, b) => b.createdAt - a.createdAt)[0];
+            return (
             <motion.div
               key={server.id}
               initial={{ opacity: 0, y: 10 }}
@@ -172,7 +182,7 @@ export default function Dashboard() {
                 <Button variant="secondary" size="sm" onClick={() => handleCopy(server.id, server.code)}>
                   <Copy size={14} /> {copiedId === server.id ? "Copied" : "Copy code"}
                 </Button>
-                {!server.isPartner && (
+                {!server.isPartner && latestPartnerRequest?.status !== "open" && (
                   <Button
                     variant="secondary"
                     size="sm"
@@ -181,8 +191,18 @@ export default function Dashboard() {
                       setPartnerStatus("");
                     }}
                   >
-                    <Handshake size={14} /> Request Partner
+                    <Handshake size={14} /> {latestPartnerRequest?.status === "declined" ? "Request again" : "Request Partner"}
                   </Button>
+                )}
+                {!server.isPartner && latestPartnerRequest?.status === "open" && (
+                  <span className="rounded-lg border border-amber-400/25 bg-amber-400/[.07] px-3 py-1.5 text-xs font-semibold text-amber-300">
+                    Partner request pending
+                  </span>
+                )}
+                {server.isPartner && (
+                  <span className="rounded-lg border border-violet-400/25 bg-violet-400/[.08] px-3 py-1.5 text-xs font-semibold text-violet-300">
+                    SpawnDex Partner
+                  </span>
                 )}
                 <Link to={`/server/${server.id}`}>
                   <Button variant="ghost" size="sm">
@@ -194,11 +214,12 @@ export default function Dashboard() {
                 </Button>
               </div>
             </motion.div>
-          ))}
+            );
+          })}
           {partnerRequestFor && (
             <div className="rounded-2xl border border-brand-500/30 bg-brand-500/5 p-5">
               <h3 className="flex items-center gap-2 font-mono font-bold text-white"><Handshake size={16} className="text-brand-300" /> Request Partner — {partnerRequestFor.name}</h3>
-              <p className="mt-1 text-xs text-white/40">Tell the eduShare owner why your server should be a partner and what perks you're offering players.</p>
+              <p className="mt-1 text-xs text-white/40">Tell the SpawnDex owner why your server should be a partner and what perks you're offering players.</p>
               <textarea
                 value={partnerMessage}
                 onChange={(e) => setPartnerMessage(e.target.value)}

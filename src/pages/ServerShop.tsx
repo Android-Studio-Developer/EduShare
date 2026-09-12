@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { Check, Coins, Copy, ImagePlus, Plus, ShoppingBag } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { isAppwriteConfigured, uploadChatFile } from "../lib/appwrite";
+import { isStaffRole } from "../lib/moderation";
 import { subscribeToServer } from "../lib/servers";
 import { addShopItem, buyShopItem, ensureWallet, fulfillOrder, subscribeToBalance, subscribeToOrders, subscribeToShopItems } from "../lib/shop";
 import type { MinecraftServer, ShopItem, ShopOrder } from "../types";
@@ -22,7 +23,7 @@ export default function ServerShop() {
   const [draft, setDraft] = useState({ name: "", minecraftItemId: "minecraft:diamond_sword", price: 10, description: "" });
   const [draftImage, setDraftImage] = useState<{ imageId: string; imageUrl: string } | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
-  const staff = !!server && (server.ownerId === user?.uid || (!!user && (server.managerIds ?? []).includes(user.uid)) || role === "owner" || role === "moderator");
+  const staff = !!server && (server.ownerId === user?.uid || (!!user && (server.managerIds ?? []).includes(user.uid)) || isStaffRole(role));
 
   async function handleImagePick(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];

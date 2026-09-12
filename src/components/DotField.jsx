@@ -91,6 +91,7 @@ const DotField = memo(({
       const s = sizeRef.current;
       mouseRef.current.x = e.pageX - s.offsetX;
       mouseRef.current.y = e.pageY - s.offsetY;
+      if (rafRef.current === null) rafRef.current = requestAnimationFrame(tick);
     }
 
     function updateMouseSpeed() {
@@ -202,7 +203,11 @@ const DotField = memo(({
 
       ctx.fill();
 
-      rafRef.current = requestAnimationFrame(tick);
+      if (eng === 0 && m.speed === 0 && p.waveAmplitude <= 0 && !p.sparkle) {
+        rafRef.current = null;
+      } else {
+        rafRef.current = requestAnimationFrame(tick);
+      }
     }
 
     doResize();

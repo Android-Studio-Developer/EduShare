@@ -9,9 +9,11 @@ export const RANK_ORDER: Rank[] = [
   "vip_plus_plus",
   "mvp_plus",
   "mvp_plus_plus",
+  "partner",
   "mod",
   "admin",
   "owner",
+  "builder",
 ];
 
 export const RANK_LABEL: Record<Rank, string> = {
@@ -25,6 +27,8 @@ export const RANK_LABEL: Record<Rank, string> = {
   admin: "ADMIN",
   owner: "OWNER",
   partner: "PARTNER",
+  advertiser: "ADVERTISER",
+  builder: "BUILDERS",
 };
 
 export const RANK_COLOR: Record<Rank, string> = {
@@ -38,6 +42,8 @@ export const RANK_COLOR: Record<Rank, string> = {
   admin: "text-red-400",
   owner: "text-yellow-300",
   partner: "text-violet-400",
+  advertiser: "text-purple-400",
+  builder: "text-orange-400",
 };
 
 // Name color for display purposes — same as RANK_COLOR except the top purchasable
@@ -49,6 +55,18 @@ export function rankNameClass(rank: Rank | undefined | null): string {
 
 export const PURCHASABLE_RANKS: Rank[] = ["vip", "vip_plus", "vip_plus_plus", "mvp_plus", "mvp_plus_plus"];
 export const STAFF_RANKS: Rank[] = ["mod", "admin", "owner"];
+
+export const PROMO_CODE = "HYPNO";
+export const PROMO_DISCOUNT_PERCENT = 30;
+export const COSMETIC_PACK_COST = 200;
+
+export function isPromoCode(code: string) {
+  return code.trim().toUpperCase() === PROMO_CODE;
+}
+
+export function discountedCost(cost: number, code: string) {
+  return isPromoCode(code) ? Math.ceil(cost * 0.7) : cost;
+}
 
 export const RANK_CREDIT_COST: Partial<Record<Rank, number>> = {
   vip: 150,
@@ -71,11 +89,18 @@ export const RANK_PERKS: Partial<Record<Rank, string[]>> = {
   vip: ["Green name color in chat", "[VIP] chat badge"],
   vip_plus: ["Cyan name color", "[VIP+] chat badge", "Custom chat message color"],
   vip_plus_plus: ["Sky-blue name color", "[VIP++] chat badge", "Animated profile banner effects"],
-  mvp_plus: ["Gold name color", "[MVP+] chat badge", "Animated badge glow"],
+  mvp_plus: ["Gold name color", "[MVP+] chat badge", "Animated badge glow", "12 custom 96×96 emojis"],
   mvp_plus_plus: ["Gradient name color", "[MVP++] chat badge", "Exclusive profile frame"],
+  builder: ["Gradient name color", "[BUILDERS] chat badge", "Exclusive profile frame", "Earns Build Help credits and honorary site-ownership %"],
 };
 
 export function rankTier(rank: Rank | undefined | null): number {
+  if (rank === "partner" || rank === "advertiser" || rank === "mod") return 6;
+  if (rank === "admin") return 7;
+  if (rank === "owner") return 8;
+  // Builders are a same-tier, differently-labeled alternative to MVP++ —
+  // granted by staff for helping build, not purchasable/climbable.
+  if (rank === "builder") return rankTier("mvp_plus_plus");
   return RANK_ORDER.indexOf(rank ?? "none");
 }
 
@@ -117,19 +142,34 @@ export function levelForNextRank(currentRank: Rank): { rank: Rank; level: number
   return null;
 }
 
-export async function purchaseRank(userId: string, rank: Rank) {
-  const cost = RANK_CREDIT_COST[rank];
-  if (!cost) throw new Error("This rank is not purchasable.");
+export async function purchaseRank(userId: string, rank: Rank, promoCode = "") {
+  const baseCost = RANK_CREDIT_COST[rank];
+  if (!baseCost) throw new Error("This rank is not purchasable.");
+  const cost = discountedCost(baseCost, promoCode);
   const walletRef = doc(db, "wallets", userId);
   const profileRef = doc(db, "profiles", userId);
   await runTransaction(db, async (transaction) => {
     const [wallet, profile] = await Promise.all([transaction.get(walletRef), transaction.get(profileRef)]);
     const balance = wallet.data()?.balance ?? 0;
-    if (balance < cost) throw new Error("Not enough eduShare Credits.");
+    if (balance < cost) throw new Error("Not enough SpawnDex Credits.");
     const currentRank = (profile.data()?.rank ?? "none") as Rank;
     if (rankTier(rank) <= rankTier(currentRank)) throw new Error("You already have this rank or higher.");
     transaction.update(walletRef, { balance: balance - cost });
     transaction.update(profileRef, { rank });
+  });
+}
+
+export async function purchaseCosmeticPack(userId: string, promoCode = "") {
+  const cost = discountedCost(COSMETIC_PACK_COST, promoCode);
+  const walletRef = doc(db, "wallets", userId);
+  const profileRef = doc(db, "profiles", userId);
+  await runTransaction(db, async (transaction) => {
+    const [wallet, profile] = await Promise.all([transaction.get(walletRef), transaction.get(profileRef)]);
+    if (profile.data()?.cosmeticPackOwned === true) throw new Error("You already own the cosmetic add-on.");
+    const balance = wallet.data()?.balance ?? 0;
+    if (balance < cost) throw new Error("Not enough SpawnDex Credits.");
+    transaction.update(walletRef, { balance: balance - cost });
+    transaction.update(profileRef, { cosmeticPackOwned: true });
   });
 }
 

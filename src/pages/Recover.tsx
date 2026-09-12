@@ -37,7 +37,7 @@ export default function Recover() {
 
         {sent ? (
           <div className="space-y-4 text-center">
-            <p className="text-sm text-white/70">Sent to the eduShare owner. If you gave a way to reach you, expect a reply there — this isn't instant.</p>
+            <p className="text-sm text-white/70">Sent to the SpawnDex owner. If you gave a way to reach you, expect a reply there — this isn't instant.</p>
             <Link to="/login" className="cursor-target block text-sm font-medium text-brand-400 hover:underline">Back to log in</Link>
           </div>
         ) : (

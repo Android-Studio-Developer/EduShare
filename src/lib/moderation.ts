@@ -31,13 +31,22 @@ export function subscribeToRole(
     return () => {};
   }
   return onSnapshot(doc(db, "roles", uid), (snapshot) => {
-    callback(snapshot.data()?.role === "moderator" ? "moderator" : "member");
+    const role = snapshot.data()?.role;
+    callback(role === "moderator" || role === "actor" || role === "headmod" || role === "dabug" ? role : "member");
   });
+}
+
+// "actor"/"headmod" carry the exact same permissions as "moderator" everywhere
+// (Firestore rules' isModerator() treats them identically) — they're distinct
+// roles purely so movie-cast members and senior mods get their own badge/label
+// instead of showing up as a regular moderator.
+export function isStaffRole(role: SiteRole): boolean {
+  return role === "owner" || role === "moderator" || role === "actor" || role === "headmod";
 }
 
 export interface StaffMember {
   id: string;
-  role: "owner" | "moderator";
+  role: "owner" | "moderator" | "actor" | "headmod" | "dabug";
 }
 
 export function subscribeToStaffRoles(callback: (staff: StaffMember[]) => void) {
@@ -45,9 +54,19 @@ export function subscribeToStaffRoles(callback: (staff: StaffMember[]) => void) 
     callback(
       snapshot.docs
         .map((d) => ({ id: d.id, role: d.data().role as string }))
-        .filter((r): r is StaffMember => r.role === "owner" || r.role === "moderator"),
+        .filter((r): r is StaffMember => r.role === "owner" || r.role === "moderator" || r.role === "actor" || r.role === "headmod" || r.role === "dabug"),
     );
   });
+}
+
+export function setSiteRole(userId: string, role: Exclude<SiteRole, "owner">) {
+  return setDoc(doc(db, "roles", userId), { role, grantedAt: Date.now() }, { merge: true });
+}
+
+// Invisible voice-changer flag. Firestore rules restrict this write to the
+// owner account specifically — not isStaff(), so moderators can't grant it.
+export function setVoiceUnlocked(userId: string, value: boolean) {
+  return updateDoc(doc(db, "profiles", userId), { voiceUnlocked: value });
 }
 
 export async function submitModeratorApplication(
@@ -88,7 +107,7 @@ export async function reviewModeratorApplication(
       grantedAt: Date.now(),
     });
   }
-  await createNotification({ recipientId: application.userId, type: "moderation", title: `Moderator application ${decision}`, message: decision === "approved" ? "You now have eduShare moderator access." : "Your moderator application was not approved this time.", link: "/moderation" });
+  await createNotification({ recipientId: application.userId, type: "moderation", title: `Moderator application ${decision}`, message: decision === "approved" ? "You now have SpawnDex moderator access." : "Your moderator application was not approved this time.", link: "/moderation" });
 }
 
 export function submitServerReport(data: Omit<ServerReport, "id" | "status" | "createdAt">) {

@@ -1,35 +1,41 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Mic, MicOff, Monitor, MonitorOff, Phone, PhoneOff, Plus, Trash2, Volume2, VolumeX } from "lucide-react";
+import { FlaskConical, LockKeyhole, Maximize2, MessageSquare, Mic, MicOff, Monitor, MonitorOff, Phone, PhoneOff, Plus, Send, Trash2, Volume2, VolumeX, X } from "lucide-react";
+import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useVoiceCall } from "../context/VoiceCallContext";
 import { useSpeakingLevels } from "../hooks/useSpeakingLevels";
-import { createVoiceChannel, deleteVoiceChannel, ensureGeneralChannel, STALE_MS, subscribeToParticipants, subscribeToVoiceChannels } from "../lib/voice";
+import { clearVoiceMessages, createVoiceChannel, deleteVoiceChannel, ensureGeneralChannel, sendVoiceMessage, STAFF_MEETING_ID, STALE_MS, subscribeToParticipants, subscribeToVoiceChannels, subscribeToVoiceMessages } from "../lib/voice";
+import { isStaffRole } from "../lib/moderation";
 import { subscribeToProfile } from "../lib/profiles";
 import { rankNameClass, rankTier } from "../lib/ranks";
-import type { Rank, UserProfile, VoiceChannelDoc, VoiceParticipant } from "../types";
+import { VOICE_EFFECT_OPTIONS } from "../lib/voiceEffects";
+import type { Rank, UserProfile, VoiceChannelDoc, VoiceChatMessage, VoiceParticipant } from "../types";
 import Button from "../components/Button";
 import ProfileCard from "../components/ProfileCard";
-import LineSidebarRaw from "../components/LineSidebar";
-import DockRaw from "../components/Dock";
-import connectSoundUrl from "./connect.mp3";
-import disconnectSoundUrl from "./disconnect.mp3";
 import muteSoundUrl from "./discordmute.mp3";
 import streamSoundUrl from "./stream.mp3";
+import carlBotIcon from "../assets/icons/boticon.svg";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const LineSidebar = LineSidebarRaw as any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const Dock = DockRaw as any;
-
-function ScreenShareTile({ label, stream, muted }: { label: string; stream: MediaStream; muted: boolean }) {
+function ScreenShareTile({ label, stream, muted, onFocus, focused = false }: { label: string; stream: MediaStream; muted: boolean; onFocus?: () => void; focused?: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
-    if (ref.current) ref.current.srcObject = stream;
+    const video = ref.current;
+    if (!video) return;
+    video.srcObject = stream;
+    const play = () => void video.play().catch(() => {});
+    play();
+    video.addEventListener("loadedmetadata", play);
+    video.addEventListener("canplay", play);
+    return () => {
+      video.removeEventListener("loadedmetadata", play);
+      video.removeEventListener("canplay", play);
+      video.srcObject = null;
+    };
   }, [stream]);
   return (
-    <div className="overflow-hidden rounded-2xl border border-border bg-black">
-      <video ref={ref} autoPlay playsInline muted={muted} className="max-h-[26rem] w-full object-contain" />
-      <p className="border-t border-border bg-surface-2 px-3 py-1.5 text-xs font-medium text-white/60">{label}</p>
+    <div onClick={onFocus} onKeyDown={(event) => { if (onFocus && (event.key === "Enter" || event.key === " ")) onFocus(); }} role={onFocus ? "button" : undefined} tabIndex={onFocus ? 0 : undefined} title={onFocus ? "Focus screen share" : undefined} className={`overflow-hidden rounded-2xl border border-border bg-black ${onFocus ? "cursor-target cursor-zoom-in outline-none focus:border-brand-400" : ""}`}>
+      <video ref={ref} autoPlay playsInline muted={muted} className={`${focused ? "max-h-[80vh]" : "max-h-[26rem]"} w-full object-contain`} />
+      <p className="flex items-center justify-between border-t border-border bg-surface-2 px-3 py-1.5 text-xs font-medium text-white/60"><span>{label}</span>{onFocus && <Maximize2 size={12}/>}</p>
     </div>
   );
 }
@@ -47,12 +53,12 @@ function ParticipantTile({
   rank: Rank;
   muted: boolean;
   speaking: boolean;
-  onClick: () => void;
+  onClick?: () => void;
 }) {
   return (
     <div
       onClick={onClick}
-      className={`cursor-target flex aspect-square cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 bg-surface-2 p-4 transition-colors duration-100 ${
+      className={`flex min-h-36 flex-col items-center justify-center gap-3 rounded-2xl border-2 bg-surface-2 p-4 transition-colors duration-100 ${onClick ? "cursor-target cursor-pointer" : ""} ${
         speaking ? "border-green-500" : "border-border"
       }`}
     >
@@ -77,6 +83,7 @@ function ParticipantTile({
 
 export default function Voice() {
   const { user, role } = useAuth();
+  const isStaff = isStaffRole(role);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [channels, setChannels] = useState<VoiceChannelDoc[]>([]);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
@@ -84,6 +91,12 @@ export default function Voice() {
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
+  const [voiceMessages, setVoiceMessages] = useState<VoiceChatMessage[]>([]);
+  const [voiceText, setVoiceText] = useState("");
+  const [voiceSending, setVoiceSending] = useState(false);
+  const [voiceMessageError, setVoiceMessageError] = useState("");
+  const [focusedScreenId, setFocusedScreenId] = useState<string | null>(null);
+  const voiceMessagesEndRef = useRef<HTMLDivElement>(null);
 
   const {
     joinedChannelId,
@@ -102,18 +115,18 @@ export default function Voice() {
     stopScreenShare,
     deafened,
     setDeafened,
+    ttsEnabled,
+    setTtsEnabled,
+    voiceEffect,
+    setVoiceEffect,
   } = useVoiceCall();
 
-  const connectAudioRef = useRef<HTMLAudioElement | null>(null);
-  const disconnectAudioRef = useRef<HTMLAudioElement | null>(null);
   const muteAudioRef = useRef<HTMLAudioElement | null>(null);
   const streamAudioRef = useRef<HTMLAudioElement | null>(null);
   useEffect(() => {
-    connectAudioRef.current = new Audio(connectSoundUrl);
-    disconnectAudioRef.current = new Audio(disconnectSoundUrl);
     muteAudioRef.current = new Audio(muteSoundUrl);
     streamAudioRef.current = new Audio(streamSoundUrl);
-    [connectAudioRef, disconnectAudioRef, muteAudioRef, streamAudioRef].forEach((r) => {
+    [muteAudioRef, streamAudioRef].forEach((r) => {
       if (r.current) {
         r.current.preload = "auto";
         r.current.volume = 1;
@@ -132,16 +145,6 @@ export default function Voice() {
     void el.play().catch((err) => console.warn("Voice sound blocked:", err));
   }
 
-  const prevJoinedRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (joinedChannelId && !prevJoinedRef.current) {
-      playSound(connectAudioRef);
-    } else if (!joinedChannelId && prevJoinedRef.current) {
-      playSound(disconnectAudioRef);
-    }
-    prevJoinedRef.current = joinedChannelId;
-  }, [joinedChannelId]);
-
   const prevScreenCountRef = useRef(0);
   useEffect(() => {
     const count = (localScreenStream ? 1 : 0) + Object.keys(remoteScreenStreams).length;
@@ -154,16 +157,28 @@ export default function Voice() {
   useEffect(() => {
     void ensureGeneralChannel();
     return subscribeToVoiceChannels((cs) => {
-      setChannels(cs);
+      const visibleChannels = cs.filter((channel) => channel.id !== STAFF_MEETING_ID && (!channel.staffOnly || isStaff));
+      setChannels(visibleChannels);
       setChannelsLoaded(true);
-      setSelectedChannelId((prev) => prev ?? cs[0]?.id ?? null);
+      setSelectedChannelId((prev) => visibleChannels.some((channel) => channel.id === prev) ? prev : visibleChannels[0]?.id ?? null);
     });
-  }, []);
+  }, [isStaff]);
 
   useEffect(() => {
     if (!user) return;
     return subscribeToProfile(user.uid, setProfile);
   }, [user]);
+
+  useEffect(() => {
+    setVoiceMessages([]);
+    setVoiceMessageError("");
+    if (!selectedChannelId) return;
+    return subscribeToVoiceMessages(selectedChannelId, setVoiceMessages);
+  }, [selectedChannelId]);
+
+  useEffect(() => {
+    voiceMessagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [voiceMessages.length]);
 
   function handleToggleMute() {
     playSound(muteAudioRef);
@@ -177,11 +192,14 @@ export default function Voice() {
   }, [remoteStreams, localStream, user]);
   const speaking = useSpeakingLevels(speakingStreams);
 
-  const canCreate = role === "owner" || role === "moderator" || rankTier(profile?.rank) >= rankTier("mvp_plus");
-  const isStaff = role === "owner" || role === "moderator";
+  const canCreate = isStaffRole(role) || rankTier(profile?.rank) >= rankTier("mvp_plus");
   const selectedChannel = channels.find((c) => c.id === selectedChannelId) ?? null;
   const isJoinedHere = joinedChannelId === selectedChannelId;
   const joinedChannel = channels.find((c) => c.id === joinedChannelId) ?? null;
+
+  useEffect(() => {
+    if (channelsLoaded && joinedChannelId && !channels.some((channel) => channel.id === joinedChannelId)) leave();
+  }, [channels, channelsLoaded, joinedChannelId, leave]);
 
   // Read-only view of who's in a channel you haven't joined — Firestore participant
   // docs exist independent of your own join state, so browsing a channel should show
@@ -209,17 +227,6 @@ export default function Voice() {
   }, [selectedChannelId, isJoinedHere]);
 
   const displayParticipants = isJoinedHere ? participants : previewParticipants;
-
-  const sidebarItems = [...channels.map((c) => c.name), ...(canCreate ? ["+ New channel"] : [])];
-  const activeIndex = selectedChannelId ? channels.findIndex((c) => c.id === selectedChannelId) : null;
-
-  function handleSidebarClick(index: number) {
-    if (canCreate && index === channels.length) {
-      setShowCreateForm(true);
-      return;
-    }
-    setSelectedChannelId(channels[index]?.id ?? null);
-  }
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -256,56 +263,80 @@ export default function Voice() {
     });
   }
 
-  const dockItems = [
-    {
-      icon: muted ? <MicOff size={20} /> : <Mic size={20} />,
-      label: muted ? "Unmute" : "Mute",
-      onClick: handleToggleMute,
-    },
-    {
-      icon: deafened ? <VolumeX size={20} /> : <Volume2 size={20} />,
-      label: deafened ? "Undeafen" : "Deafen",
-      onClick: () => setDeafened((d) => !d),
-    },
-    {
-      icon: localScreenStream ? <MonitorOff size={20} className="text-red-400" /> : <Monitor size={20} />,
-      label: localScreenStream ? "Stop sharing" : "Share screen",
-      onClick: () => (localScreenStream ? stopScreenShare() : startScreenShare()),
-    },
-    {
-      icon: <PhoneOff size={20} className="text-red-400" />,
-      label: "Leave",
-      onClick: leave,
-    },
-  ];
+  async function sendVoiceText() {
+    if (!user || !profile || !selectedChannelId || !isJoinedHere || !voiceText.trim()) return;
+    const trimmed = voiceText.trim();
+    if (trimmed.toLowerCase() === "!chatre") {
+      if (!isStaff) {
+        setVoiceMessageError("Only staff can reset this channel's chat.");
+        return;
+      }
+      setVoiceSending(true);
+      setVoiceMessageError("");
+      try {
+        await clearVoiceMessages(selectedChannelId);
+        setVoiceText("");
+      } catch (error) {
+        setVoiceMessageError(error instanceof Error ? error.message : "Could not reset this channel's chat.");
+      } finally {
+        setVoiceSending(false);
+      }
+      return;
+    }
+    setVoiceSending(true);
+    setVoiceMessageError("");
+    try {
+      await sendVoiceMessage(selectedChannelId, user.uid, profile.displayName, profile.photoUrl, voiceText);
+      setVoiceText("");
+    } catch (error) {
+      setVoiceMessageError(error instanceof Error ? error.message : "Could not send that message.");
+    } finally {
+      setVoiceSending(false);
+    }
+  }
+
+  function handleVoiceMessage(e: FormEvent) {
+    e.preventDefault();
+    void sendVoiceText();
+  }
+
+  const screenShares = useMemo(() => [
+    ...(localScreenStream ? [{ id: "local", label: "You (sharing)", stream: localScreenStream, muted: true }] : []),
+    ...Object.entries(remoteScreenStreams).map(([uid, stream]) => ({ id: uid, label: participants.find((p) => p.id === uid)?.displayName ?? "Someone", stream, muted: deafened })),
+  ], [localScreenStream, remoteScreenStreams, participants, deafened]);
+  const focusedScreen = screenShares.find((share) => share.id === focusedScreenId) ?? null;
+
+  useEffect(() => {
+    if (focusedScreenId && !screenShares.some((share) => share.id === focusedScreenId)) setFocusedScreenId(null);
+  }, [focusedScreenId, screenShares]);
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-14">
-      <div>
-        <h1 className="font-mono text-2xl font-bold text-white">Voice Chat</h1>
-        <p className="text-sm text-white/45">Discord-style channels. MVP+ and staff can create new ones.</p>
+    <div className="mx-auto max-w-[96rem] px-3 py-5 sm:px-5 sm:py-8">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="font-mono text-[10px] font-bold uppercase tracking-[.2em] text-brand-300">Live communications</p>
+          <h1 className="mt-1 text-2xl font-bold text-white">Voice Chat</h1>
+          <p className="text-sm text-white/45">Join a room, talk, message, or share your screen.</p>
+        </div>
+        {profile?.voiceUnlocked && (
+          <Link to="/voice-lab" className="cursor-target flex items-center gap-1.5 rounded-xl border border-border bg-surface px-3 py-2 text-xs font-semibold text-white/60 hover:text-white">
+            <FlaskConical size={13} /> Voice Lab
+          </Link>
+        )}
       </div>
 
-      <div className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-[200px_1fr]">
-        <div className="rounded-2xl border border-border bg-surface p-5">
+      <div className="mt-5 grid grid-cols-1 overflow-hidden rounded-2xl border border-white/[.09] bg-[#0b0e12]/95 shadow-2xl shadow-black/25 md:grid-cols-[240px_minmax(0,1fr)]">
+        <div className="border-b border-white/[.08] bg-[#10141a] md:border-b-0 md:border-r">
+          <div className="flex items-center justify-between border-b border-white/[.08] px-4 py-4"><div><p className="text-sm font-bold text-white">Voice channels</p><p className="text-[10px] text-white/30">{channels.length} available</p></div>{canCreate&&<button type="button" onClick={()=>setShowCreateForm(true)} aria-label="New channel" className="cursor-target grid h-8 w-8 place-items-center rounded-lg text-white/45 hover:bg-white/[.07] hover:text-white"><Plus size={16}/></button>}</div>
           {!channelsLoaded ? (
-            <p className="text-sm text-white/30">Loading channels...</p>
+            <p className="px-4 py-6 text-sm text-white/30">Loading channels...</p>
           ) : (
-            <LineSidebar
-              items={sidebarItems}
-              defaultActive={activeIndex}
-              accentColor="#6690ff"
-              textColor="#9aa0ad"
-              markerColor="#3a3f4a"
-              fontSize={0.95}
-              itemGap={16}
-              showIndex={false}
-              onItemClick={(index: number) => handleSidebarClick(index)}
-            />
+            <nav className="max-h-64 space-y-1 overflow-y-auto p-2 md:max-h-[650px]">{channels.map((channel)=><button key={channel.id} type="button" onClick={()=>setSelectedChannelId(channel.id)} className={`cursor-target flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-semibold ${selectedChannelId===channel.id?"bg-brand-500/15 text-white":"text-white/45 hover:bg-white/[.05] hover:text-white/75"}`}>{channel.staffOnly?<LockKeyhole size={16} className="shrink-0 text-amber-300"/>:<Volume2 size={16} className="shrink-0"/>}<span className="min-w-0 flex-1 truncate">{channel.name}</span>{joinedChannelId===channel.id&&<span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400"/>}</button>)}</nav>
           )}
+          {joinedChannel&&<div className="border-t border-white/[.08] bg-emerald-400/[.04] px-4 py-3"><p className="flex items-center gap-2 text-xs font-semibold text-emerald-300"><span className="h-2 w-2 rounded-full bg-emerald-400"/>Voice connected</p><p className="mt-1 truncate text-[10px] text-white/35">{joinedChannel.name}</p></div>}
         </div>
 
-        <div className="min-w-0 rounded-2xl border border-border bg-surface p-6">
+        <div className="min-w-0 bg-[#0c0f14] p-4 sm:p-6">
           {!channelsLoaded ? (
             <p className="text-sm text-white/30">Loading...</p>
           ) : !selectedChannel ? (
@@ -314,8 +345,8 @@ export default function Voice() {
             <>
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="flex items-center gap-2 font-mono text-lg font-semibold text-white"><Volume2 size={16} className="text-brand-400" /> {selectedChannel.name}</p>
-                  <p className="text-xs text-white/40">{displayParticipants.length} connected</p>
+                  <p className="flex items-center gap-2 font-mono text-lg font-semibold text-white">{selectedChannel.staffOnly ? <LockKeyhole size={16} className="text-amber-300" /> : <Volume2 size={16} className="text-brand-400" />} {selectedChannel.name}</p>
+                  <p className="text-xs text-white/40">{displayParticipants.length + (selectedChannel.staffOnly ? 1 : 0)} connected{selectedChannel.staffOnly ? " · Staff only · closes after 5 min inactive" : ""}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   {!selectedChannel.isDefault && (user?.uid === selectedChannel.createdBy || isStaff) && (
@@ -338,17 +369,17 @@ export default function Voice() {
 
               {micError && <p className="mt-3 text-xs text-red-400">{micError}</p>}
 
-              {(localScreenStream || Object.keys(remoteScreenStreams).length > 0) && (
+              {screenShares.length > 0 && (
                 <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
-                  {localScreenStream && <ScreenShareTile label="You (sharing)" stream={localScreenStream} muted />}
-                  {Object.entries(remoteScreenStreams).map(([uid, stream]) => (
-                    <ScreenShareTile key={uid} label={participants.find((p) => p.id === uid)?.displayName ?? "Someone"} stream={stream} muted={deafened} />
-                  ))}
+                  {screenShares.map((share) => <ScreenShareTile key={share.id} label={share.label} stream={share.stream} muted={share.muted} onFocus={() => setFocusedScreenId(share.id)}/>)}
                 </div>
               )}
 
-              {displayParticipants.length > 0 ? (
-                <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
+              {displayParticipants.length > 0 || selectedChannel.staffOnly ? (
+                <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {selectedChannel.staffOnly && (
+                    <ParticipantTile photoUrl={carlBotIcon} displayName="Carl-bot" rank="none" muted={false} speaking={false} />
+                  )}
                   {displayParticipants.map((p) => (
                     <ParticipantTile
                       key={p.id}
@@ -362,11 +393,20 @@ export default function Voice() {
                   ))}
                 </div>
               ) : (
-                <div className="mt-10 flex flex-col items-center justify-center gap-2 py-10 text-center">
-                  <Volume2 size={28} className="text-white/20" />
-                  <p className="text-sm text-white/30">Nobody's connected here yet.</p>
+                <div className="mt-6 flex min-h-72 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-white/[.08] bg-white/[.015] text-center">
+                  <span className="grid h-16 w-16 place-items-center rounded-full bg-white/[.04]"><Volume2 size={28} className="text-white/20" /></span>
+                  <p className="mt-2 text-sm font-semibold text-white/45">This room is quiet</p>
+                  <p className="text-xs text-white/25">Join the channel and invite someone.</p>
+                  {!isJoinedHere&&<Button size="sm" disabled={connecting} onClick={handleJoin}><Phone size={13}/>Join channel</Button>}
                 </div>
               )}
+
+              <section className="mt-6 overflow-hidden rounded-2xl border border-border bg-surface-2/35">
+                <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3"><div className="flex items-center gap-2"><MessageSquare size={15} className="text-brand-300"/><div><h2 className="text-sm font-semibold text-white">Channel chat</h2><p className="text-[10px] text-white/35">Read new messages aloud in American English.</p></div></div><button type="button" onClick={() => setTtsEnabled((value) => !value)} className={`cursor-target flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold ${ttsEnabled ? "border-brand-400/40 bg-brand-500/15 text-brand-200" : "border-border bg-white/5 text-white/40"}`}>{ttsEnabled ? <Volume2 size={12}/> : <VolumeX size={12}/>}TTS {ttsEnabled ? "on" : "off"}</button></div>
+                <div className="max-h-80 min-h-44 space-y-3 overflow-y-auto p-4" role="log" aria-live="polite">{voiceMessages.length===0?<p className="py-12 text-center text-xs text-white/25">No channel messages yet.</p>:voiceMessages.map((item)=><div key={item.id} className="flex items-start gap-2.5">{item.authorPhotoUrl?<img src={item.authorPhotoUrl} alt="" className="h-7 w-7 shrink-0 rounded-lg object-cover"/>:<span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand-500/20 text-[10px] font-bold text-brand-200">{item.authorName.slice(0,1).toUpperCase()}</span>}<div className="min-w-0"><p className="flex items-center gap-1.5 text-[11px] font-semibold text-white/65">{item.authorName}{item.broadcastTts&&<span className="rounded bg-brand-500/15 px-1 py-0.5 text-[8px] uppercase tracking-wider text-brand-200">TTS</span>}</p><p className="break-words text-sm text-white/80">{item.text}</p></div></div>)}<div ref={voiceMessagesEndRef}/></div>
+                <form onSubmit={handleVoiceMessage} className="flex flex-wrap gap-2 border-t border-border p-3"><input value={voiceText} onChange={(event)=>setVoiceText(event.target.value)} disabled={!isJoinedHere} maxLength={500} placeholder={isJoinedHere?"Message this voice channel…":"Join the channel to chat"} className="min-w-0 flex-1 rounded-xl border border-border bg-surface px-3 py-2 text-sm text-white placeholder:text-white/25 disabled:cursor-not-allowed disabled:opacity-50"/><Button type="submit" size="sm" disabled={!isJoinedHere||voiceSending||!voiceText.trim()} aria-label="Send channel message as text to speech"><Volume2 size={14}/><Send size={14}/></Button></form>
+                {voiceMessageError&&<p className="px-4 pb-3 text-xs text-red-400">{voiceMessageError}</p>}
+              </section>
             </>
           )}
 
@@ -389,11 +429,34 @@ export default function Voice() {
         </div>
       </div>
 
-      {joinedChannel && (
-        <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2">
-          <Dock items={dockItems} magnification={64} baseItemSize={44} panelHeight={60} dockHeight={90} />
+      {joinedChannel && profile?.voiceUnlocked && (
+        <div className="mt-3 flex max-w-full gap-1 overflow-x-auto rounded-xl border border-border bg-surface/90 p-1.5">
+          {VOICE_EFFECT_OPTIONS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => void setVoiceEffect(option.id)}
+              className={`cursor-target rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+                voiceEffect === option.id ? "bg-brand-500 text-white" : "text-white/50 hover:text-white"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
         </div>
       )}
+
+      {joinedChannel && (
+        <div className="sticky bottom-3 z-40 mx-auto mt-3 flex w-fit items-center gap-2 rounded-2xl border border-white/10 bg-[#10141a]/95 p-2 shadow-2xl backdrop-blur-xl">
+          <button type="button" onClick={handleToggleMute} aria-label={muted?"Unmute":"Mute"} className={`cursor-target grid h-11 w-11 place-items-center rounded-xl ${muted?"bg-red-500/20 text-red-300":"bg-white/[.07] text-white/75 hover:bg-white/10"}`}>{muted?<MicOff size={19}/>:<Mic size={19}/>}</button>
+          <button type="button" onClick={()=>setDeafened((value)=>!value)} aria-label={deafened?"Undeafen":"Deafen"} className={`cursor-target grid h-11 w-11 place-items-center rounded-xl ${deafened?"bg-red-500/20 text-red-300":"bg-white/[.07] text-white/75 hover:bg-white/10"}`}>{deafened?<VolumeX size={19}/>:<Volume2 size={19}/>}</button>
+          <button type="button" onClick={()=>localScreenStream?stopScreenShare():startScreenShare()} aria-label={localScreenStream?"Stop sharing":"Share screen"} className={`cursor-target grid h-11 w-11 place-items-center rounded-xl ${localScreenStream?"bg-brand-500/25 text-brand-200":"bg-white/[.07] text-white/75 hover:bg-white/10"}`}>{localScreenStream?<MonitorOff size={19}/>:<Monitor size={19}/>}</button>
+          <span className="mx-1 h-7 w-px bg-white/10"/>
+          <button type="button" onClick={leave} aria-label="Disconnect" className="cursor-target grid h-11 w-14 place-items-center rounded-xl bg-red-500 text-white hover:bg-red-400"><PhoneOff size={20}/></button>
+        </div>
+      )}
+
+      {focusedScreen && <div className="fixed inset-0 z-[80] grid place-items-center bg-black/85 p-3 backdrop-blur-sm sm:p-8" role="dialog" aria-modal="true" aria-label={`${focusedScreen.label} focused screen share`} onMouseDown={(event)=>{if(event.target===event.currentTarget)setFocusedScreenId(null);}}><div className="relative w-full max-w-7xl"><button type="button" onClick={()=>setFocusedScreenId(null)} className="cursor-target absolute -right-2 -top-10 grid h-8 w-8 place-items-center rounded-full bg-white/10 text-white hover:bg-white/20" aria-label="Close focused screen share"><X size={17}/></button><ScreenShareTile label={`${focusedScreen.label} · focused`} stream={focusedScreen.stream} muted={focusedScreen.muted} focused/></div></div>}
 
       {openProfileId && <ProfileCard userId={openProfileId} onClose={() => setOpenProfileId(null)} />}
     </div>

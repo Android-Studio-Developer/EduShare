@@ -12,7 +12,7 @@ const COMMANDS: { cmd: string; desc: string }[] = [
   { cmd: "!friend <name>", desc: "Send a friend request to someone active in chat." },
   { cmd: "!ai <question>", desc: "Ask eduBot's AI a quick question." },
   { cmd: "!xp", desc: "Check your arcade XP and level." },
-  { cmd: "!chatre", desc: "Staff only — wipes Global Chat." },
+  { cmd: "!chatre", desc: "Staff only — wipes Global Chat. Also works in a Voice channel's chat to wipe just that channel." },
   { cmd: "!del", desc: "Staff only — deletes every shared file from Global Chat." },
 ];
 
@@ -32,16 +32,16 @@ export default function Guide() {
         <BookOpen size={26} className="text-brand-400" />
         <div>
           <h1 className="font-mono text-2xl font-bold text-white">Site Guide</h1>
-          <p className="text-sm text-white/45">Everything eduShare can do, in one place.</p>
+          <p className="text-sm text-white/45">Everything SpawnDex can do, in one place.</p>
         </div>
       </div>
 
       <Section title="Getting started">
-        <p>eduShare is a directory of Minecraft servers with a community hub built in — chat, voice, friends, ranks, and an arcade bot. Browse servers from the home page, or dive into the community features below.</p>
+        <p>SpawnDex is a directory of Minecraft servers with a community hub built in — chat, voice, friends, ranks, and an arcade bot. Browse servers from the home page, or dive into the community features below.</p>
       </Section>
 
       <Section title="Ranks & levels">
-        <p>Every 5 minutes spent on the site earns a level. Ranks unlock either by reaching the required level for free, or by buying them with eduShare Credits.</p>
+        <p>Every 5 minutes spent on the site earns a level. Ranks unlock either by reaching the required level for free, or by buying them with SpawnDex Credits.</p>
         <div className="overflow-x-auto rounded-2xl border border-border">
           <table className="w-full text-left text-xs">
             <thead className="bg-surface-2 text-white/40">
@@ -67,7 +67,7 @@ export default function Guide() {
         <p className="text-xs text-white/40">Staff ranks ({STAFF_RANKS.map((r) => RANK_LABEL[r]).join(", ")}) are granted by owners, not purchased.</p>
       </Section>
 
-      <Section title="eduShare Credits">
+      <Section title="SpawnDex Credits">
         <p>Credits are earned, not free — claim +15 once a day from your Profile page, or passively earn +8 for every 5 minutes you stay active on the site. Betting and winning duels/games against eduBot is another way to build a stash. You can also send credits directly to another player from their profile card.</p>
       </Section>
 
@@ -83,6 +83,22 @@ export default function Guide() {
         </div>
       </Section>
 
+      <Section title="Community servers">
+        <p>Servers are Discord-style friend spaces. Open Servers, create a server if you have MVP++ or staff access, then set a banner, invite members by username, assign member/mod/admin tags, and add text or voice channels. Server owners can kick members or ban a username from chatting in that server. SpawnDex does not expose IP addresses for server bans.</p>
+      </Section>
+
+      <Section title="Developer bots & EduPy">
+        <p>Developer Portal bots run in Global Chat with <code>@bot command args</code>, <code>/bot command args</code>, or the bot's prefix. EduPy is a safe Python-style language: define a command, optionally make a string variable, then return a reply.</p>
+        <pre className="overflow-x-auto rounded-2xl border border-border bg-black/30 p-4 text-xs leading-6 text-white/70"><code>{`def hello(user, args):
+    reply = f"Hey {user}, you said {args}"
+    return reply
+
+@verify
+def verify(user, args):
+    return f"Verified {user}!"`}</code></pre>
+        <p><code>{'{user}'}</code> becomes the name of the member who used the command. <code>{'{args}'}</code> becomes everything after the command, so <code>/helper hello Steve</code> can reply with <code>Hey HashtagPro, you said Steve</code>.</p>
+      </Section>
+
       <Section title="Polls">
         <p>Every registered server's chat has a poll button next to the message box — ask a question with 2-4 options, and anyone in that server's chat can vote. Votes update live and you can change your pick any time.</p>
       </Section>
@@ -92,7 +108,7 @@ export default function Guide() {
       </Section>
 
       <Section title="Voice Chat">
-        <p>Discord-style voice channels — join, talk live, see who's speaking. MVP+ and staff can create new channels. Click any participant's avatar to view their profile.</p>
+        <p>Discord-style voice channels — join, talk live, and use channel text chat. Every new channel message is automatically read aloud in American English to everyone connected. MVP+ and staff can create new channels. Click a shared screen to focus it, or click any participant's avatar to view their profile.</p>
       </Section>
 
       <Section title="Friends & messages">

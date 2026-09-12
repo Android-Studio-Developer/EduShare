@@ -11,9 +11,10 @@ const BADGE_ICONS: Record<string, { icon: LucideIcon; color: string }> = {
   champion: { icon: Trophy, color: "text-emerald-300" },
   guild: { icon: Castle, color: "text-violet-300" },
   party: { icon: Users, color: "text-teal-300" },
+  "verified-bot": { icon: ShieldCheck, color: "text-emerald-300" },
 };
 
-export default function UserBadges({ profile, size = 14 }: { profile: Pick<UserProfile, "rank" | "joinedAt" | "botXp" | "partyId" | "guildId">; size?: number }) {
+export default function UserBadges({ profile, size = 14 }: { profile: Pick<UserProfile, "rank" | "joinedAt" | "botXp" | "partyId" | "guildId" | "verifiedBotIds">; size?: number }) {
   const badges = computeBadges(profile);
   if (badges.length === 0) return null;
   return (

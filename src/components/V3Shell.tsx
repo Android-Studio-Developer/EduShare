@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
+  ArrowUpRight,
   Bell,
   Blocks,
+  Bot,
   BookOpen,
+  Calculator,
   Castle,
   ChevronLeft,
   ChevronRight,
@@ -12,15 +15,19 @@ import {
   Gamepad2,
   Heart,
   LayoutDashboard,
+  Laugh,
   LogOut,
   Menu,
   MessageCircle,
+  MessageSquare,
   Music,
   Music2,
   Plus,
   Search,
+  Server,
   Shield,
   Sparkles,
+  Swords,
   UserPlus,
   Users,
   Volume2,
@@ -43,6 +50,8 @@ const publicItems: NavItem[] = [
 
 const communityItems: NavItem[] = [
   { to: "/chat", label: "Community chat", icon: MessageCircle },
+  { to: "/messages", label: "Messages", icon: MessageSquare },
+  { to: "/chat-servers", label: "Servers", icon: Server },
   { to: "/friends", label: "Friends", icon: UserPlus },
   { to: "/party", label: "Party & guild", icon: Castle },
   { to: "/voice", label: "Voice rooms", icon: Volume2 },
@@ -52,11 +61,15 @@ const communityItems: NavItem[] = [
 const libraryItems: NavItem[] = [
   { to: "/fun", label: "Arcade", icon: Gamepad2 },
   { to: "/shares", label: "Worlds & mods", icon: Blocks },
+  { to: "/bedwars", label: "Ranked Bedwars", icon: Swords },
+  { to: "/memes", label: "Meme dump", icon: Laugh },
+  { to: "/calculator", label: "Calculator", icon: Calculator },
   { to: "/favorites", label: "Favorites", icon: Heart },
 ];
 
 const accountItems: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/develop", label: "Developer portal", icon: Bot },
   { to: "/notifications", label: "Notifications", icon: Bell },
   { to: "/profile", label: "Profile & settings", icon: CircleUserRound },
 ];
@@ -67,14 +80,20 @@ const routeTitles: Record<string, string> = {
   "/team": "Team",
   "/changelog": "What's new",
   "/chat": "Community chat",
+  "/messages": "Messages",
+  "/chat-servers": "Servers",
   "/friends": "Friends",
   "/party": "Party & guild",
   "/voice": "Voice rooms",
   "/players": "Players",
   "/fun": "Arcade",
   "/shares": "Worlds & mods",
+  "/bedwars": "Ranked Bedwars",
+  "/memes": "Meme dump",
+  "/calculator": "Calculator",
   "/favorites": "Favorites",
   "/dashboard": "Dashboard",
+  "/develop": "Developer portal",
   "/notifications": "Notifications",
   "/profile": "Profile & settings",
   "/moderation": "Moderation",
@@ -123,10 +142,10 @@ export default function V3Shell({ children }: { children: ReactNode }) {
   const title = useMemo(() => {
     if (location.pathname.startsWith("/server/")) return "Server details";
     if (location.pathname.startsWith("/dispute/")) return "Dispute room";
-    return routeTitles[location.pathname] ?? "eduShare";
+    return routeTitles[location.pathname] ?? "SpawnDex";
   }, [location.pathname]);
 
-  const staffLabel = role === "owner" ? "Owner tools" : role === "moderator" ? "Moderation" : "Apply for mod";
+  const staffLabel = role === "owner" ? "Owner tools" : role === "moderator" || role === "actor" || role === "headmod" ? "Moderation" : "Apply for mod";
   const staffItem: NavItem = { to: "/moderation", label: staffLabel, icon: Shield };
 
   return (
@@ -149,6 +168,16 @@ export default function V3Shell({ children }: { children: ReactNode }) {
           {user && <NavGroup label="Community" items={communityItems} collapsed={collapsed} />}
           {user && <NavGroup label="Library" items={libraryItems} collapsed={collapsed} />}
           {user && <NavGroup label="Workspace" items={[...accountItems, staffItem]} collapsed={collapsed} />}
+          {user && !collapsed && (
+            <div className="v3-sidebar-card">
+              <div className="flex items-center gap-2"><span className="v3-sidebar-card-icon"><Bot size={15}/></span><strong>eduBot corner</strong><span className="ml-auto h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,.8)]"/></div>
+              <p>Ask <code>!ai</code> or chat normally—eduBot can join the conversation.</p>
+              <div className="grid grid-cols-2 gap-2">
+                <Link to="/chat" className="cursor-target">Open chat <ArrowUpRight size={11}/></Link>
+                <Link to="/fun" className="cursor-target">Play games <Gamepad2 size={11}/></Link>
+              </div>
+            </div>
+          )}
         </nav>
 
         <div className="v3-sidebar-footer">
@@ -191,7 +220,7 @@ export default function V3Shell({ children }: { children: ReactNode }) {
         <SideLink item={publicItems[0]} collapsed />
         {user && <SideLink item={communityItems[0]} collapsed />}
         {user && <SideLink item={accountItems[0]} collapsed />}
-        {user && <SideLink item={accountItems[2]} collapsed />}
+        {user && <SideLink item={accountItems[3]} collapsed />}
         <button type="button" className={`v3-nav-link cursor-target ${mobileOpen ? "is-active" : ""}`} onClick={() => setMobileOpen(true)} aria-label="More navigation"><Menu size={18} /></button>
       </nav>
 

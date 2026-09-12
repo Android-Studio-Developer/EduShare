@@ -1,14 +1,14 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 import { motion } from "framer-motion";
-import { BarChart3, File as FileIcon, Globe2, Minus, Paperclip, Pin, Plus, Send, Trash2, X } from "lucide-react";
+import { BarChart3, Bell, BellOff, CheckCheck, Clock3, File as FileIcon, Globe2, Minus, Paperclip, Pin, Plus, Reply, Send, SmilePlus, Trash2, Wifi, WifiOff, X } from "lucide-react";
 import botIconUrl from "../assets/icons/boticon.svg";
 import { useAuth } from "../context/AuthContext";
-import { clearPublicChatFiles, clearPublicMessages, deletePublicMessage, sendPublicMessage, subscribeToPublicMessages, togglePublicPin, togglePublicReaction, votePublicPoll } from "../lib/chat";
+import { clearPublicChatFiles, clearPublicMessages, deletePublicMessage, extractYoutubeId, sendPublicMessage, subscribeToPublicMessages, togglePublicPin, togglePublicReaction, votePublicPoll } from "../lib/chat";
 import { isAppwriteConfigured, uploadChatFile } from "../lib/appwrite";
-import { flagDeletedMessage } from "../lib/moderation";
+import { flagDeletedMessage, isStaffRole } from "../lib/moderation";
 import { createNotification } from "../lib/notifications";
 import { awardBotXp, isOnline, subscribeToAllProfiles, subscribeToProfile } from "../lib/profiles";
-import { askAi, checkLocalProfanity, formatBanRemaining, getChatBanRemaining, screenChatMessageRemote } from "../lib/aiModeration";
+import { askAi, checkLocalProfanity, createAmbientChatReply, formatBanRemaining, getChatBanRemaining, screenChatMessageRemote } from "../lib/aiModeration";
 import { claimDuelReward, createDuel, declineDuel, resolveDuel, subscribeToMyDuels } from "../lib/duels";
 import { sendFriendRequest } from "../lib/friends";
 import { subscribeToBalance } from "../lib/shop";
@@ -34,10 +34,17 @@ import {
   wordleWinXp,
 } from "../lib/minigames";
 import { rankNameClass } from "../lib/ranks";
-import type { ChatMessage, Duel, UserProfile } from "../types";
+import { nameStyle } from "../lib/cosmetics";
+import type { ChatMessage, CustomEmoji, Duel, UserProfile } from "../types";
 import Button from "./Button";
 import ProfileCard from "./ProfileCard";
+import LazyYoutubeEmbed from "./LazyYoutubeEmbed";
 import RankBadge from "./RankBadge";
+import GuildTag from "./GuildTag";
+import { subscribeToGuilds } from "../lib/guilds";
+import { recordDeveloperBotEvent, subscribeToDeveloperBots, verifyWithDeveloperBot } from "../lib/developers";
+import type { DeveloperBot, Guild } from "../types";
+import MentionInput from "./MentionInput";
 
 function timeAgo(ts: number) {
   const s = Math.floor((Date.now() - ts) / 1000);
@@ -50,9 +57,10 @@ function timeAgo(ts: number) {
 }
 
 const MENTION_RE = /@[\w.]+/g;
+const URL_RE = /(https?:\/\/[^\s]+)/g;
 const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🔥"];
 
-function renderWithMentions(text: string, myName: string, myUsername: string) {
+function renderMentionsOnly(text: string, myName: string, myUsername: string, keyPrefix: string) {
   const parts = text.split(MENTION_RE);
   const mentions = text.match(MENTION_RE) ?? [];
   const nodes: ReactNode[] = [];
@@ -65,7 +73,7 @@ function renderWithMentions(text: string, myName: string, myUsername: string) {
       const isMe = target === myName.toLowerCase() || (!!myUsername && target === myUsername);
       nodes.push(
         <span
-          key={i}
+          key={`${keyPrefix}-${i}`}
           className={`rounded px-1 font-semibold ${isSpecial ? "bg-amber-500/25 text-amber-200" : isMe ? "bg-brand-500/30 text-brand-200" : "bg-white/10 text-white/80"}`}
         >
           {mention}
@@ -74,6 +82,32 @@ function renderWithMentions(text: string, myName: string, myUsername: string) {
     }
   });
   return nodes;
+}
+
+// Splits on URLs first (so links render as clickable anchors), then runs
+// @mention highlighting on whatever plain text is left between them.
+function renderEmojiText(text: string, myName: string, myUsername: string, emojis: CustomEmoji[], keyPrefix: string) {
+  const exact = text.trim().match(/^:([a-z0-9_]{1,20}):$/i);
+  const exactEmoji = exact ? emojis.find((emoji) => emoji.name === exact[1].toLowerCase()) : undefined;
+  if (exactEmoji) return <img src={exactEmoji.url} alt={`:${exactEmoji.name}:`} title={`:${exactEmoji.name}:`} className="my-1 h-24 w-24 object-contain"/>;
+  return text.split(/(:[a-z0-9_]{1,20}:)/gi).map((part, index) => {
+    const match = part.match(/^:([a-z0-9_]{1,20}):$/i);
+    const emoji = match ? emojis.find((item) => item.name === match[1].toLowerCase()) : undefined;
+    return emoji ? <img key={`${keyPrefix}-emoji-${index}`} src={emoji.url} alt={`:${emoji.name}:`} title={`:${emoji.name}:`} className="mx-0.5 inline-block h-8 w-8 align-middle object-contain"/> : <span key={`${keyPrefix}-text-${index}`}>{renderMentionsOnly(part, myName, myUsername, `${keyPrefix}-${index}`)}</span>;
+  });
+}
+
+function renderWithMentions(text: string, myName: string, myUsername: string, emojis: CustomEmoji[] = []) {
+  const segments = text.split(URL_RE);
+  return segments.map((segment, i) =>
+    /^https?:\/\//.test(segment) ? (
+      <a key={i} href={segment} target="_blank" rel="noopener noreferrer" className="text-brand-300 underline hover:text-brand-200">
+        {segment}
+      </a>
+    ) : (
+      <span key={i}>{renderEmojiText(segment, myName, myUsername, emojis, String(i))}</span>
+    ),
+  );
 }
 
 function formatTypers(names: string[]) {
@@ -88,8 +122,16 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [filterMessage, setFilterMessage] = useState("");
+  useEffect(() => {
+    if (!filterMessage) return;
+    const timer = window.setTimeout(() => setFilterMessage(""), 6_000);
+    return () => window.clearTimeout(timer);
+  }, [filterMessage]);
   const [myProfile, setMyProfile] = useState<UserProfile | null>(null);
   const [allProfiles, setAllProfiles] = useState<UserProfile[]>([]);
+  const [guilds, setGuilds] = useState<Guild[]>([]);
+  const [developerBots, setDeveloperBots] = useState<DeveloperBot[]>([]);
+  const [chatStatus, setChatStatus] = useState<"online" | "reconnecting" | "offline">(navigator.onLine ? "online" : "offline");
   const [walletBalance, setWalletBalance] = useState(0);
   const [pendingTrivia, setPendingTrivia] = useState<TriviaQuestion | null>(null);
   const [pendingWordle, setPendingWordle] = useState<{ answer: string; guesses: number } | null>(null);
@@ -100,23 +142,32 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
   const [pollOpen, setPollOpen] = useState(false);
   const [pollQuestion, setPollQuestion] = useState("");
   const [pollOptions, setPollOptions] = useState(["", ""]);
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  const [replyPing, setReplyPing] = useState(true);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastAiCallRef = useRef(0);
+  const lastAmbientReplyRef = useRef(0);
   const lastTypingSentRef = useRef(0);
   const typingClearRef = useRef<number | null>(null);
   const seenMessageIdsRef = useRef<Set<string> | null>(null);
   const pingAudioRef = useRef<HTMLAudioElement | null>(null);
+  const botRateRef = useRef(new Map<string, number>());
 
   // Firebase Auth's displayName is frozen at signup — the live, renameable
   // name lives on the Firestore profile doc. Always prefer that for anything
   // shown to other people (chat author, duel labels, typing indicator, etc.).
   const myName = myProfile?.displayName || user?.displayName || undefined;
+  const guildById = useMemo(() => new Map(guilds.map((guild) => [guild.id, guild])), [guilds]);
 
   useEffect(() => {
     pingAudioRef.current = new Audio(pingSoundUrl);
     pingAudioRef.current.preload = "auto";
   }, []);
+
+  useEffect(() => subscribeToGuilds(setGuilds), []);
+  useEffect(() => subscribeToDeveloperBots(setDeveloperBots), []);
 
   useEffect(() => {
     if (!user) return;
@@ -137,10 +188,11 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
     const pinged = fresh.some(
       (m) =>
         m.authorId !== user.uid &&
+        ((m.replyPing === true && m.replyToAuthorId === user.uid) ||
         (m.text.match(MENTION_RE) ?? []).some((mn) => {
           const target = mn.slice(1).toLowerCase();
           return target === myNameLower || (!!myUsernameLower && target === myUsernameLower) || target === "everyone" || target === "here";
-        }),
+        })),
     );
     if (pinged) void pingAudioRef.current?.play().catch(() => {});
   }, [messages, user]);
@@ -165,8 +217,12 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
   }
 
   useEffect(() => {
-    const unsub = subscribeToPublicMessages(setMessages, 100);
-    return unsub;
+    const online = () => setChatStatus("online");
+    const offline = () => setChatStatus("offline");
+    window.addEventListener("online", online);
+    window.addEventListener("offline", offline);
+    const unsub = subscribeToPublicMessages((items) => { setMessages(items); setChatStatus(navigator.onLine ? "online" : "offline"); }, 100, () => setChatStatus(navigator.onLine ? "reconnecting" : "offline"));
+    return () => { unsub(); window.removeEventListener("online", online); window.removeEventListener("offline", offline); };
   }, []);
 
   useEffect(() => {
@@ -211,7 +267,7 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
   }
 
   async function handleDelete(m: ChatMessage) {
-    const isStaffRemoval = (role === "owner" || role === "moderator") && user?.uid !== m.authorId;
+    const isStaffRemoval = isStaffRole(role) && user?.uid !== m.authorId;
     await deletePublicMessage(m.id);
     if (isStaffRemoval && user) {
       await flagDeletedMessage({
@@ -253,7 +309,7 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
       void createNotification({ recipientId, type: "mention", title, message: text.slice(0, 100), link: "/chat" });
     };
 
-    if (mentions.includes("everyone") && (role === "owner" || role === "moderator")) {
+    if (mentions.includes("everyone") && isStaffRole(role)) {
       allProfiles.forEach((p) => notify(p.id, `${myName} pinged @everyone in Global Chat`));
       return;
     }
@@ -262,7 +318,7 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
       return;
     }
     mentions.forEach((mn) => {
-      const byUsername = allProfiles.find((p) => p.usernameLower === mn);
+      const byUsername = allProfiles.find((p) => p.usernameLower === mn || p.displayName.replace(/\s+/g, "").toLowerCase() === mn);
       const target = byUsername ?? findRecentAuthor(mn);
       if (!target) return;
       notify(target.id, `${myName} mentioned you in Global Chat`);
@@ -271,13 +327,24 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
 
   async function runCommand(raw: string) {
     if (!user) return;
-    await sendPublicMessage(user.uid, myName ?? "Anonymous", raw, myProfile?.rank ?? "none", {
-      authorPhotoUrl: myProfile?.photoUrl ?? "",
-    });
 
     const [cmdRaw, ...rest] = raw.slice(1).trim().split(/\s+/);
     const cmd = cmdRaw.toLowerCase();
     const arg = rest.join(" ");
+
+    if (cmd === "em") {
+      const youtubeId = extractYoutubeId(arg.trim().replace(/^"|"$/g, ""));
+      if (!youtubeId) return botReply('Usage: !em "https://youtube.com/watch?v=..."');
+      await sendPublicMessage(user.uid, myName ?? "Anonymous", arg.trim(), myProfile?.rank ?? "none", {
+        authorPhotoUrl: myProfile?.photoUrl ?? "",
+        youtubeId,
+      });
+      return;
+    }
+
+    await sendPublicMessage(user.uid, myName ?? "Anonymous", raw, myProfile?.rank ?? "none", {
+      authorPhotoUrl: myProfile?.photoUrl ?? "",
+    });
 
     if (cmd === "help" || cmd === "commands") return botReply(BOT_HELP);
 
@@ -352,13 +419,13 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
     }
 
     if (cmd === "chatre") {
-      if (role !== "owner" && role !== "moderator") return botReply("Only staff can reset Global Chat.");
+      if (!isStaffRole(role)) return botReply("Only staff can reset Global Chat.");
       await clearPublicMessages();
       return botReply("Global Chat has been reset.");
     }
 
     if (cmd === "del") {
-      if (role !== "owner" && role !== "moderator") return botReply("Only staff can delete shared files.");
+      if (!isStaffRole(role)) return botReply("Only staff can delete shared files.");
       const count = await clearPublicChatFiles();
       return botReply(count > 0 ? `Deleted ${count} shared file(s) from Global Chat.` : "No shared files to delete.");
     }
@@ -430,6 +497,67 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
     if (result.xp !== 0) await awardBotXp(user.uid, result.xp);
   }
 
+  function runDeveloperBot(raw: string) {
+    if (!user) return false;
+    const mention = raw.match(/^@([a-z0-9_]+)\s+([a-z0-9_-]+)(?:\s+([\s\S]*))?$/i);
+    let bot: DeveloperBot | undefined;
+    let commandName = "";
+    let args = "";
+    if (mention) {
+      bot = developerBots.find((item) => item.enabled && item.handle.toLowerCase() === mention[1].toLowerCase());
+      commandName = mention[2].toLowerCase();
+      args = mention[3]?.trim() ?? "";
+    } else {
+      const slash = raw.match(/^\/([a-z0-9_]+)\s+([a-z0-9_-]+)(?:\s+([\s\S]*))?$/i);
+      if (slash) {
+        bot = developerBots.find((item) => item.enabled && item.handle.toLowerCase() === slash[1].toLowerCase());
+        commandName = slash[2].toLowerCase();
+        args = slash[3]?.trim() ?? "";
+      }
+    }
+    if (!mention && !bot) {
+      bot = developerBots.find((item) => item.enabled && raw.startsWith(item.prefix));
+      if (bot) {
+        const [first, ...rest] = raw.slice(bot.prefix.length).trim().split(/\s+/);
+        commandName = first?.toLowerCase() ?? "";
+        args = rest.join(" ");
+      }
+    }
+    if (!bot) return false;
+    const startedAt = Date.now();
+    const rateKey = `${bot.id}:${user.uid}`;
+    const lastRun = botRateRef.current.get(rateKey) ?? 0;
+    if (startedAt - lastRun < 3_000) {
+      setText("");
+      void recordDeveloperBotEvent(bot.id, { command: commandName || "unknown", invokedById: user.uid, invokedByName: myName ?? "Member", status: "rate_limited", latencyMs: 0 }).catch(() => undefined);
+      void sendPublicMessage(user.uid, bot.name, "Slow down—this bot allows one command every 3 seconds.", "none", { authorPhotoUrl: bot.avatarUrl, isBot: true, botId: bot.id, triggeredById: user.uid });
+      return true;
+    }
+    botRateRef.current.set(rateKey, startedAt);
+    const command = bot.commands.find((item) => item.name.toLowerCase() === commandName);
+    const reply = command
+      ? command.response.replace(/\{user\}/gi, myName ?? "Member").replace(/\{args\}/gi, args).slice(0, 500)
+      : `Unknown command. Try: ${bot.commands.map((item) => item.name).join(", ")}`;
+    setText("");
+    const queuedNotice = window.setTimeout(() => setFilterMessage("Message queued — reconnecting to chat…"), 4_000);
+    void sendPublicMessage(user.uid, myName ?? "Anonymous", raw, myProfile?.rank ?? "none", { authorPhotoUrl: myProfile?.photoUrl ?? "" })
+      .then(async () => {
+        if (command?.action === "verify" && bot.verificationEnabled && !myProfile?.verifiedBotIds.includes(bot.id)) await verifyWithDeveloperBot(bot.id, user.uid);
+        return sendPublicMessage(user.uid, bot.name, reply, "none", { authorPhotoUrl: bot.avatarUrl, isBot: true, botId: bot.id, triggeredById: user.uid });
+      })
+      .then(() => {
+        window.clearTimeout(queuedNotice); setFilterMessage("");
+        void recordDeveloperBotEvent(bot.id, { command: commandName || "unknown", invokedById: user.uid, invokedByName: myName ?? "Member", status: command ? "success" : "unknown_command", latencyMs: Date.now() - startedAt }).catch(() => undefined);
+      })
+      .catch((error) => {
+        window.clearTimeout(queuedNotice);
+        setText((current) => current || raw);
+        setFilterMessage(error instanceof Error ? error.message : "Could not send that bot command.");
+        void recordDeveloperBotEvent(bot.id, { command: commandName || "unknown", invokedById: user.uid, invokedByName: myName ?? "Member", status: "failed", latencyMs: Date.now() - startedAt }).catch(() => undefined);
+      });
+    return true;
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     const trimmed = text.trim().slice(0, 500);
@@ -454,19 +582,56 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
         setFilterMessage(`Message blocked: ${localHit.reason}. Chat is paused for 2 hours.`);
         return;
       }
-      const sentRef = await sendPublicMessage(user.uid, myName ?? "Anonymous", trimmed, myProfile?.rank ?? "none", {
+      if (runDeveloperBot(trimmed)) return;
+      const sendPromise = sendPublicMessage(user.uid, myName ?? "Anonymous", trimmed, myProfile?.rank ?? "none", {
         authorPhotoUrl: myProfile?.photoUrl ?? "",
+        replyTo: replyTo ? { id: replyTo.id, authorId: replyTo.authorId, author: replyTo.authorName, text: replyTo.text, ping: replyPing } : undefined,
       });
-      notifyMentioned(trimmed, user.uid, myName ?? "Someone");
+      const queuedNotice = window.setTimeout(() => setFilterMessage("Message queued — reconnecting to chat…"), 4_000);
+      // Firestore can keep a write promise pending while reconnecting even
+      // though the message is already queued locally. Release the composer
+      // immediately and attach follow-up work to the eventual acknowledgement.
       setText("");
-
-      // AI screening happens after send so it never blocks the message on
-      // network latency — flagged messages get pulled back retroactively.
-      void screenChatMessageRemote(user.uid, trimmed, user.email).then((screening) => {
-        if (screening.spam) {
-          void deletePublicMessage(sentRef.id);
-          setFilterMessage(`Your message was removed by AI moderation: ${screening.reason}. Chat is paused for 2 hours.`);
+      const sentReply = replyTo;
+      const shouldPingReply = replyPing;
+      setReplyTo(null);
+      setReplyPing(true);
+      void sendPromise.then((sentRef) => {
+        window.clearTimeout(queuedNotice);
+        setFilterMessage("");
+        notifyMentioned(trimmed, user.uid, myName ?? "Someone");
+        if (sentReply && shouldPingReply && sentReply.authorId !== user.uid) {
+          void createNotification({ recipientId: sentReply.authorId, type: "mention", title: `${myName ?? "Someone"} replied to you in Global Chat`, message: trimmed.slice(0, 100), link: "/chat" });
         }
+        // AI screening happens after send so it never blocks the composer.
+        void screenChatMessageRemote(user.uid, trimmed, user.email).then((screening) => {
+          if (screening.spam) {
+            void deletePublicMessage(sentRef.id);
+            setFilterMessage(`Your message was removed by AI moderation: ${screening.reason}. Chat is paused for 2 hours.`);
+            return;
+          }
+          const directlyAddressed = /(?:^|\s)@?edubot\b/i.test(trimmed);
+          const botSpokeRecently = messages.some((message) => message.isBot && Date.now() - message.createdAt < 45_000);
+          if (!directlyAddressed && (botSpokeRecently || Date.now() - lastAmbientReplyRef.current < 45_000)) return;
+          lastAmbientReplyRef.current = Date.now();
+          const context: ChatMessage[] = [...messages.slice(-11), {
+            id: sentRef.id,
+            text: trimmed,
+            authorId: user.uid,
+            authorName: myName ?? "Anonymous",
+            authorRank: myProfile?.rank ?? "none",
+            authorPhotoUrl: myProfile?.photoUrl ?? "",
+            createdAt: Date.now(),
+          }];
+          void createAmbientChatReply(context).then((reply) => {
+            if (reply) void sendPublicMessage(user.uid, "eduBot", reply, "none", { isBot: true });
+          });
+        });
+      }).catch((error) => {
+        window.clearTimeout(queuedNotice);
+        setText((current) => current || trimmed);
+        if (sentReply) { setReplyTo(sentReply); setReplyPing(shouldPingReply); }
+        setFilterMessage(error instanceof Error ? error.message : "Could not send that message.");
       });
     } catch (error) {
       setFilterMessage(error instanceof Error ? error.message : "Could not check that message.");
@@ -543,8 +708,8 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
       <div className="flex items-center gap-2 border-b border-border bg-surface-2/60 px-6 py-3">
         <Globe2 size={16} className="text-brand-400" />
         <h3 className="font-mono text-sm font-semibold text-white">Global Chat</h3>
-        <span className="ml-auto flex items-center gap-1 text-[11px] text-white/30">
-          AI mod on
+        <span className={`ml-auto flex items-center gap-1 text-[11px] ${chatStatus === "online" ? "text-emerald-300/70" : chatStatus === "reconnecting" ? "text-amber-300/70" : "text-red-300/70"}`}>
+          {chatStatus === "online" ? <Wifi size={11}/> : <WifiOff size={11}/>} {chatStatus === "online" ? "Connected" : chatStatus === "reconnecting" ? "Reconnecting" : "Offline"}
         </span>
       </div>
 
@@ -559,20 +724,21 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
         </div>
       )}
 
-      <div ref={scrollRef} className={`${tall ? "h-[28rem]" : "max-h-56"} space-y-2.5 overflow-x-hidden overflow-y-auto p-4`}>
+      <div ref={scrollRef} className={`${tall ? "h-[34rem] min-h-[34rem] lg:h-[calc(100vh-15rem)] lg:max-h-[52rem]" : "max-h-56"} space-y-2.5 overflow-x-hidden overflow-y-auto p-4 sm:p-5`}>
         {messages.length === 0 ? (
           <p className="py-4 text-center text-sm text-white/30">No messages yet — say hi.</p>
         ) : (
           messages.map((m) => (
             <motion.div
               key={m.id}
+              id={`public-message-${m.id}`}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               className="group flex items-start gap-2"
             >
               {m.isBot ? (
                 <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-indigo-500/20">
-                  <img src={botIconUrl} alt="" className="h-full w-full object-cover" />
+                  <img src={m.authorPhotoUrl || botIconUrl} alt="" className="h-full w-full object-cover" />
                 </span>
               ) : m.authorPhotoUrl ? (
                 <img
@@ -590,16 +756,37 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
                 </span>
               )}
               <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-baseline gap-1.5">
-                  <span
-                    onClick={() => !m.isBot && setOpenProfileId(m.authorId)}
-                    className={`cursor-target truncate text-xs font-semibold ${!m.isBot ? "cursor-pointer" : ""} ${m.authorRank && m.authorRank !== "none" ? rankNameClass(m.authorRank) : "text-white"}`}
+                {m.replyToId && (
+                  <button
+                    type="button"
+                    onClick={() => document.getElementById(`public-message-${m.replyToId}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                    className="cursor-target mb-1 flex max-w-full items-center gap-1.5 text-left text-[10px] text-white/35 hover:text-white/55"
                   >
-                    {m.authorName}
-                  </span>
+                    <Reply size={10} className="shrink-0"/>
+                    <span className="shrink-0 font-semibold text-brand-300/70">{m.replyToAuthor}</span>
+                    <span className="truncate">{m.replyToText}</span>
+                    {m.replyPing === false && <BellOff size={9} className="shrink-0" aria-label="Reply sent without ping"/>}
+                  </button>
+                )}
+                <div className="flex flex-wrap items-baseline gap-1.5">
+                  {(() => {
+                    const authorProfile = m.isBot ? undefined : allProfiles.find((p) => p.id === m.authorId);
+                    const cosmetic = nameStyle(authorProfile);
+                    const authorGuild = authorProfile?.guildId ? guildById.get(authorProfile.guildId) : undefined;
+                    return (
+                      <><span
+                          onClick={() => !m.isBot && setOpenProfileId(m.authorId)}
+                          className={`cursor-target truncate text-xs font-semibold ${!m.isBot ? "cursor-pointer" : ""} ${cosmetic.className || (m.authorRank && m.authorRank !== "none" ? rankNameClass(m.authorRank) : "text-white")}`}
+                          style={cosmetic.style}
+                        >
+                          {m.authorName}
+                        </span><GuildTag tag={authorGuild?.tag} icon={authorGuild?.tagIcon} font={authorGuild?.tagFont} imageUrl={authorGuild?.tagImageUrl} color={authorGuild?.tagColor}/></>
+                    );
+                  })()}
                   {m.isBot && <span className="rounded-md bg-indigo-500/20 px-1.5 py-0.5 font-mono text-[9px] font-bold text-indigo-300">APP</span>}
                   <RankBadge rank={m.authorRank} />
                   <span className="shrink-0 text-[10px] text-white/30">{timeAgo(m.createdAt)}</span>
+                  {m.deliveryState === "sending" ? <Clock3 size={10} className="text-amber-300/60" aria-label="Sending"/> : m.authorId === user?.uid ? <CheckCheck size={10} className="text-emerald-300/45" aria-label="Sent"/> : null}
                 </div>
                 {m.poll ? (
                   <div className="mt-1 max-w-xs rounded-xl border border-border bg-surface-2/60 p-3">
@@ -633,7 +820,7 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
                     </div>
                   </div>
                 ) : (
-                  <p className="text-sm break-words text-white/70 [overflow-wrap:anywhere]">{renderWithMentions(m.text, myName ?? "", myProfile?.usernameLower ?? "")}</p>
+                  <p className="text-sm break-words text-white/70 [overflow-wrap:anywhere]">{renderWithMentions(m.text, myName ?? "", myProfile?.usernameLower ?? "", allProfiles.find((profile) => profile.id === m.authorId)?.customEmojis)}</p>
                 )}
                 {m.fileUrl && (
                   m.fileType?.startsWith("image/") ? (
@@ -653,6 +840,11 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
                     </a>
                   )
                 )}
+                {m.youtubeId && (
+                  <div className="mt-1.5 w-full max-w-sm">
+                    <LazyYoutubeEmbed videoId={m.youtubeId} label="YouTube video" />
+                  </div>
+                )}
                 {m.reactions && Object.entries(m.reactions).some(([, uids]) => uids.length > 0) && (
                   <div className="mt-1 flex flex-wrap gap-1">
                     {Object.entries(m.reactions)
@@ -671,6 +863,14 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
                 )}
               </div>
               <div className="ml-auto flex shrink-0 gap-0.5 opacity-0 group-hover:opacity-100">
+                <button
+                  type="button"
+                  onClick={() => { setReplyTo(m); setReplyPing(true); }}
+                  aria-label={`Reply to ${m.authorName}`}
+                  className="cursor-target rounded-lg p-1.5 text-white/25 hover:bg-white/10 hover:text-brand-300"
+                >
+                  <Reply size={12}/>
+                </button>
                 {REACTION_EMOJIS.map((emoji) => (
                   <button
                     key={emoji}
@@ -682,7 +882,7 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
                     {emoji}
                   </button>
                 ))}
-                {(role === "owner" || role === "moderator") && (
+                {isStaffRole(role) && (
                   <button
                     type="button"
                     onClick={() => togglePin(m)}
@@ -692,7 +892,7 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
                     {m.pinned ? <Pin size={12} className="text-amber-300" /> : <Pin size={12} />}
                   </button>
                 )}
-                {(role === "owner" || role === "moderator" || user?.uid === m.authorId) && (
+                {(isStaffRole(role) || user?.uid === m.authorId) && (
                   <button
                     type="button"
                     onClick={() => handleDelete(m)}
@@ -721,6 +921,23 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
 
       {user ? (
         <div className="border-t border-border p-3">
+          {replyTo && !pollOpen && (
+            <div className="mb-2 flex items-center gap-2 rounded-xl border border-brand-400/15 bg-brand-500/[.06] px-3 py-2 text-xs">
+              <Reply size={13} className="shrink-0 text-brand-300"/>
+              <span className="min-w-0 flex-1 truncate text-white/55">Replying to <b className="text-white/80">{replyTo.authorName}</b>: {replyTo.text}</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={replyPing}
+                onClick={() => setReplyPing((value) => !value)}
+                className={`cursor-target flex shrink-0 items-center gap-1 rounded-lg border px-2 py-1 font-semibold ${replyPing ? "border-brand-400/35 bg-brand-500/15 text-brand-200" : "border-white/10 text-white/35"}`}
+                title={replyPing ? "The author will be pinged" : "The author will not be pinged"}
+              >
+                {replyPing ? <Bell size={11}/> : <BellOff size={11}/>} {replyPing ? "Ping on" : "Ping off"}
+              </button>
+              <button type="button" onClick={() => { setReplyTo(null); setReplyPing(true); }} aria-label="Cancel reply" className="cursor-target shrink-0 rounded-lg p-1 text-white/30 hover:bg-white/10 hover:text-white"><X size={13}/></button>
+            </div>
+          )}
           {pollOpen ? (
             <form onSubmit={handleCreatePoll} className="space-y-2 rounded-xl border border-border bg-surface-2/60 p-3">
               <div className="flex items-center gap-2">
@@ -763,17 +980,23 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
               </div>
             </form>
           ) : (
-            <form onSubmit={handleSubmit} className="flex items-center gap-2">
+            <form onSubmit={handleSubmit} className="relative flex items-center gap-2">
               <button type="button" onClick={() => setPollOpen(true)} aria-label="Create poll" className="cursor-target shrink-0 rounded-xl border border-border p-2 text-white/50 hover:border-brand-500/50 hover:text-white">
                 <BarChart3 size={14} />
               </button>
-              <input
+              <MentionInput
                 value={text}
-                onChange={(e) => handleTextChange(e.target.value)}
+                onChange={handleTextChange}
+                profiles={allProfiles}
+                includeSpecial
                 placeholder="Say something, or try !coinflip, !rps, !slots, !trivia, !duel..."
                 maxLength={500}
                 className="w-full rounded-xl border border-border bg-surface-2 px-4 py-2 text-sm text-white placeholder:text-white/30 focus:border-brand-500/50 focus:outline-none"
               />
+              {(myProfile?.customEmojis.length ?? 0) > 0 && <>
+                <button type="button" onClick={() => setEmojiOpen((open) => !open)} aria-label="Open custom emojis" className="cursor-target shrink-0 rounded-xl border border-border p-2 text-white/50 hover:border-brand-500/50 hover:text-white"><SmilePlus size={14}/></button>
+                {emojiOpen && <div className="absolute bottom-[calc(100%+8px)] right-12 z-40 w-64 rounded-2xl border border-border bg-[#141719] p-3 shadow-2xl"><p className="mb-2 font-mono text-[10px] font-bold uppercase tracking-wider text-white/35">Your emojis · 96×96</p><div className="grid grid-cols-4 gap-2">{myProfile!.customEmojis.map((emoji) => <button key={emoji.id} type="button" title={`:${emoji.name}:`} onClick={() => { setText((value) => `${value}${value && !value.endsWith(" ") ? " " : ""}:${emoji.name}: `); setEmojiOpen(false); }} className="cursor-target rounded-xl border border-white/5 bg-white/[.03] p-1.5 hover:border-brand-400/40 hover:bg-brand-500/10"><img src={emoji.url} alt={`:${emoji.name}:`} className="h-10 w-10 object-contain"/></button>)}</div></div>}
+              </>}
               {isAppwriteConfigured && (
                 <>
                   <input ref={fileInputRef} type="file" onChange={handleFileSelect} className="hidden" />
@@ -795,7 +1018,7 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
             </form>
           )}
           {uploading && <p className="mt-2 text-xs text-white/40">Uploading…</p>}
-          {filterMessage && <p className="mt-2 text-xs text-amber-300">{filterMessage}</p>}
+          {filterMessage && <p className="chat-system-notice mt-2 text-xs text-amber-300">{filterMessage}</p>}
           <p className="mt-1.5 text-[10px] text-white/25">Type !help for eduBot arcade commands.</p>
         </div>
       ) : (

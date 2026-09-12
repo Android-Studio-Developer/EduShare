@@ -9,11 +9,34 @@ service cloud.firestore {
 
     function isModerator() {
       return request.auth != null
-        && get(/databases/$(database)/documents/roles/$(request.auth.uid)).data.role == 'moderator';
+        && ((exists(/databases/$(database)/documents/roles/$(request.auth.uid))
+            && get(/databases/$(database)/documents/roles/$(request.auth.uid)).data.role in ['moderator', 'actor', 'headmod'])
+          || (exists(/databases/$(database)/documents/profiles/$(request.auth.uid))
+            && get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.rank == 'partner'));
+    }
+
+    function isDabug() {
+      return request.auth != null
+        && get(/databases/$(database)/documents/roles/$(request.auth.uid)).data.role == 'dabug';
     }
 
     function isStaff() {
       return isOwner() || isModerator();
+    }
+
+    function canAccessVoiceChannel(channelId) {
+      let channel = get(/databases/$(database)/documents/voiceChannels/$(channelId));
+      return exists(/databases/$(database)/documents/voiceChannels/$(channelId))
+        && (!(('staffOnly' in channel.data) && channel.data.staffOnly == true) || isStaff())
+        && (!(('dmId' in channel.data))
+            || (exists(/databases/$(database)/documents/dms/$(channel.data.dmId))
+                && request.auth != null
+                && request.auth.uid in get(/databases/$(database)/documents/dms/$(channel.data.dmId)).data.participants))
+        && (!(('communityServerId' in channel.data))
+            || (exists(/databases/$(database)/documents/communityChatServers/$(channel.data.communityServerId))
+                && request.auth != null
+                && (!(('bannedUserIds' in get(/databases/$(database)/documents/communityChatServers/$(channel.data.communityServerId)).data))
+                  || !(request.auth.uid in get(/databases/$(database)/documents/communityChatServers/$(channel.data.communityServerId)).data.bannedUserIds))));
     }
 
     // Roles docs self-heal for the owner's own uid on login (see subscribeToRole
@@ -53,6 +76,25 @@ service cloud.firestore {
       allow delete: if isStaff();
     }
 
+    // One doc per user (doc id == uid) — signing up for the next Movie Drop
+    // production. Self-service create/update of your own doc; staff (actor
+    // role included, via isStaff()) can remove any entry or wipe the list.
+    match /movieSignups/{userId} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() > 0
+        && request.resource.data.displayName.size() <= 80
+        && request.resource.data.photoUrl is string
+        && request.resource.data.photoUrl.size() <= 1000
+        && request.resource.data.note is string
+        && request.resource.data.note.size() <= 200
+        && request.resource.data.createdAt is int;
+      allow delete: if request.auth != null
+        && (request.auth.uid == userId || isStaff());
+    }
+
     function rankTierOf(uid) {
       let r = exists(/databases/$(database)/documents/profiles/$(uid))
         ? get(/databases/$(database)/documents/profiles/$(uid)).data.rank
@@ -62,7 +104,7 @@ service cloud.firestore {
         : r == 'vip_plus_plus' ? 3
         : r == 'mvp_plus' ? 4
         : r == 'mvp_plus_plus' ? 5
-        : r == 'mod' ? 6
+        : r in ['partner', 'mod'] ? 6
         : r == 'admin' ? 7
         : r == 'owner' ? 8
         : 0;
@@ -193,6 +235,83 @@ service cloud.firestore {
     }
 
     match /wallets/{userId} {
+      function pendingProfileField(field) {
+        let data = get(/databases/$(database)/documents/profiles/$(userId)).data;
+        return (field in data) ? data[field] : 0;
+      }
+      function validWordlePayout() {
+        let payoutId = request.resource.data.lastWordlePayoutId;
+        let duel = get(/databases/$(database)/documents/wordleDuels/$(payoutId)).data;
+        let duelAfter = getAfter(/databases/$(database)/documents/wordleDuels/$(payoutId)).data;
+        let isHost = duel.hostId == userId;
+        let isGuest = duel.guestId == userId;
+        let wasClaimed = isHost ? duel.hostPayoutClaimed : duel.guestPayoutClaimed;
+        let isClaimed = isHost ? duelAfter.hostPayoutClaimed : duelAfter.guestPayoutClaimed;
+        let payout = duel.status == 'cancelled' && isHost
+          ? duel.bet
+          : duel.status == 'finished' && duel.winnerId == ''
+            ? duel.bet
+            : duel.status == 'finished' && duel.winnerId == userId
+              ? duel.bet * 2
+              : 0;
+        return request.auth != null
+          && request.auth.uid == userId
+          && payoutId is string
+          && payoutId != (('lastWordlePayoutId' in resource.data) ? resource.data.lastWordlePayoutId : '')
+          && (isHost || isGuest)
+          && wasClaimed == false
+          && isClaimed == true
+          && payout > 0
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance', 'lastWordlePayoutId'])
+          && request.resource.data.balance == resource.data.balance + payout;
+      }
+
+      function validChessPayout() {
+        let payoutId = request.resource.data.lastChessPayoutId;
+        let duel = get(/databases/$(database)/documents/chessDuels/$(payoutId)).data;
+        let duelAfter = getAfter(/databases/$(database)/documents/chessDuels/$(payoutId)).data;
+        let isWhite = duel.whiteId == userId;
+        let isBlack = duel.blackId == userId;
+        let wasClaimed = isWhite ? duel.whitePayoutClaimed : duel.blackPayoutClaimed;
+        let isClaimed = isWhite ? duelAfter.whitePayoutClaimed : duelAfter.blackPayoutClaimed;
+        let payout = duel.status == 'cancelled' && isWhite
+          ? duel.creditBet
+          : duel.status == 'finished' && duel.result == 'draw'
+            ? duel.creditBet
+            : duel.status == 'finished'
+                && ((isWhite && duel.result == 'white') || (isBlack && duel.result == 'black'))
+              ? duel.creditBet * 2
+              : 0;
+        return request.auth != null
+          && request.auth.uid == userId
+          && payoutId is string
+          && payoutId != (('lastChessPayoutId' in resource.data) ? resource.data.lastChessPayoutId : '')
+          && (isWhite || isBlack)
+          && wasClaimed == false
+          && isClaimed == true
+          && payout > 0
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance', 'lastChessPayoutId'])
+          && request.resource.data.balance == resource.data.balance + payout;
+      }
+
+      function validCommunityEventPayout() {
+        let payoutId = request.resource.data.lastCommunityEventPayoutId;
+        let event = get(/databases/$(database)/documents/communityEvents/$(payoutId)).data;
+        let eventAfter = getAfter(/databases/$(database)/documents/communityEvents/$(payoutId)).data;
+        let eligible = (event.status == 'finished' && event.winnerId == userId)
+          || (event.status == 'cancelled' && event.hostId == userId);
+        return request.auth != null
+          && request.auth.uid == userId
+          && payoutId is string
+          && payoutId != (('lastCommunityEventPayoutId' in resource.data) ? resource.data.lastCommunityEventPayoutId : '')
+          && eligible
+          && event.payoutClaimed == false
+          && eventAfter.payoutClaimed == true
+          && event.creditPrize > 0
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance', 'lastCommunityEventPayoutId'])
+          && request.resource.data.balance == resource.data.balance + event.creditPrize;
+      }
+
       allow read: if request.auth != null && request.auth.uid == userId;
       allow create: if request.auth != null
         && ((request.auth.uid == userId && request.resource.data.balance == 100)
@@ -206,43 +325,71 @@ service cloud.firestore {
                 && getAfter(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance
                   == get(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance
                     - request.resource.data.balance));
+      // Fast path for purchases and other self-funded spends. Keeping this in
+      // a separate allow statement prevents unrelated payout/donation checks
+      // from consuming Firestore's full expression budget.
       allow update: if request.auth != null
+        && request.auth.uid == userId
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance'])
         && request.resource.data.balance is int
         && request.resource.data.balance >= 0
+        && request.resource.data.balance < resource.data.balance;
+      allow update: if request.auth != null
+        && request.resource.data.balance is int
+        && request.resource.data.balance >= 0
         && (
-          // Owner's own wallet is uncapped — no bounded-increase rules apply.
-          (isOwner() && request.auth.uid == userId)
-          || (request.auth.uid == userId
-            && (request.resource.data.balance < resource.data.balance
-                || (request.resource.data.balance == resource.data.balance + 15
-                    && getAfter(/databases/$(database)/documents/profiles/$(userId)).data.lastDailyClaim
-                      > get(/databases/$(database)/documents/profiles/$(userId)).data.lastDailyClaim
-                    && getAfter(/databases/$(database)/documents/profiles/$(userId)).data.lastDailyClaim <= request.time.toMillis())
-                // Duel bet payouts (bet capped at 100, so max win is 200) — bounded
-                // self-increase, must land in the same batch as a profiles.lastGameAt
-                // bump (same claim path arcade XP already uses below).
-                || (request.resource.data.balance <= resource.data.balance + 200
-                    && getAfter(/databases/$(database)/documents/profiles/$(userId)).data.lastGameAt
-                      > get(/databases/$(database)/documents/profiles/$(userId)).data.lastGameAt
-                    && getAfter(/databases/$(database)/documents/profiles/$(userId)).data.lastGameAt <= request.time.toMillis())
-                // Passive activity reward — +8 credits per 5 minutes spent on
-                // site, same-batch bump of profiles.lastActivityReward.
-                || (request.resource.data.balance == resource.data.balance + 8
-                    && getAfter(/databases/$(database)/documents/profiles/$(userId)).data.lastActivityReward
-                      > get(/databases/$(database)/documents/profiles/$(userId)).data.lastActivityReward
-                    && getAfter(/databases/$(database)/documents/profiles/$(userId)).data.lastActivityReward <= request.time.toMillis())))
-          // Credit donations — someone else's own wallet must decrease by the
-          // exact matching amount in the same batch. Self-decrease is always
-          // unconditionally allowed above, so this can't be used to mint credits.
-          || (request.auth.uid != userId
-              && request.resource.data.balance > resource.data.balance
-              && request.resource.data.balance <= resource.data.balance + 100000
-              && getAfter(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance
-                == get(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance
-                  - (request.resource.data.balance - resource.data.balance))
+          // Put the overwhelmingly common balance-only path first. Besides
+          // being cheaper, this prevents large transactions from exhausting
+          // Firestore's 1,000-expression evaluation budget before a simple
+          // self-funded purchase can be recognized.
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance'])
+            && (
+              // Owner's own wallet is uncapped — no bounded-increase rules apply.
+              (isOwner() && request.auth.uid == userId)
+              || (request.auth.uid == userId
+                && (request.resource.data.balance < resource.data.balance
+                    || (request.resource.data.balance == resource.data.balance + 15
+                        && getAfter(/databases/$(database)/documents/profiles/$(userId)).data.lastDailyClaim
+                          > get(/databases/$(database)/documents/profiles/$(userId)).data.lastDailyClaim
+                        && getAfter(/databases/$(database)/documents/profiles/$(userId)).data.lastDailyClaim <= request.time.toMillis())
+                    // Duel bet payouts (bet capped at 100, so max win is 200) — bounded
+                    // self-increase, must land in the same batch as a profiles.lastGameAt
+                    // bump (same claim path arcade XP already uses below).
+                    || (request.resource.data.balance <= resource.data.balance + 200
+                        && getAfter(/databases/$(database)/documents/profiles/$(userId)).data.lastGameAt
+                          > get(/databases/$(database)/documents/profiles/$(userId)).data.lastGameAt
+                        && getAfter(/databases/$(database)/documents/profiles/$(userId)).data.lastGameAt <= request.time.toMillis())
+                    // Passive activity reward — +8 credits per 5 minutes spent on
+                    // site, same-batch bump of profiles.lastActivityReward.
+                    || (request.resource.data.balance == resource.data.balance + 8
+                        && getAfter(/databases/$(database)/documents/profiles/$(userId)).data.lastActivityReward
+                          > get(/databases/$(database)/documents/profiles/$(userId)).data.lastActivityReward
+                        && getAfter(/databases/$(database)/documents/profiles/$(userId)).data.lastActivityReward <= request.time.toMillis())
+                    // Advertiser referral reward / Build Help credit claims —
+                    // the amount comes straight off this same profile doc's
+                    // pending field, so it can't be inflated past what staff granted.
+                    || (pendingProfileField('referralRewardPending') > 0
+                        && request.resource.data.balance == resource.data.balance + pendingProfileField('referralRewardPending'))
+                    || (pendingProfileField('buildHelpPending') > 0
+                        && request.resource.data.balance == resource.data.balance + pendingProfileField('buildHelpPending'))))
+              // Credit donations — someone else's own wallet must decrease by the
+              // exact matching amount in the same batch. Self-decrease is always
+              // unconditionally allowed above, so this can't be used to mint credits.
+              || (request.auth.uid != userId
+                  && request.resource.data.balance > resource.data.balance
+                  && request.resource.data.balance <= resource.data.balance + 100000
+                  && getAfter(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance
+                    == get(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance
+                      - (request.resource.data.balance - resource.data.balance))
+            ))
+          || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance', 'lastWordlePayoutId'])
+            && validWordlePayout())
+          || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance', 'lastChessPayoutId'])
+            && validChessPayout())
+          || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance', 'lastCommunityEventPayoutId'])
+            && validCommunityEventPayout())
         );
-      allow delete: if isOwner();
+      allow delete: if isOwner() || (request.auth != null && request.auth.uid == userId);
     }
 
     match /parties/{partyId} {
@@ -313,6 +460,11 @@ service cloud.firestore {
         && request.resource.data.name is string
         && request.resource.data.name.size() > 0
         && request.resource.data.name.size() <= 40
+        && request.resource.data.tag == ''
+        && request.resource.data.tagIcon == 'leaf'
+        && request.resource.data.tagFont == 'mono'
+        && request.resource.data.tagImageUrl == ''
+        && request.resource.data.tagColor == '#86efac'
         && request.resource.data.coOwnerId == ''
         && request.resource.data.memberIds is list
         && request.resource.data.memberIds.size() == 1
@@ -361,6 +513,18 @@ service cloud.firestore {
               && request.resource.data.name is string
               && request.resource.data.name.size() > 0
               && request.resource.data.name.size() <= 40)
+          // Guild tag and icon — owner or co-owner only.
+          || ((request.auth.uid == resource.data.ownerId || request.auth.uid == resource.data.coOwnerId)
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tag', 'tagIcon', 'tagFont', 'tagImageUrl', 'tagColor'])
+              && request.resource.data.tag is string
+              && request.resource.data.tag.matches('^[A-Z0-9]{0,5}$')
+              && request.resource.data.tagIcon in ['leaf', 'swords', 'heart', 'flame', 'droplet', 'skull', 'moon', 'zap', 'sparkles', 'mushroom']
+              && request.resource.data.tagFont in ['mono', 'poppins', 'playfair', 'comic', 'handwritten', 'bungee', 'pixel']
+              && request.resource.data.tagImageUrl is string
+              && request.resource.data.tagImageUrl.size() <= 1000
+              && (request.resource.data.tagImageUrl == '' || request.resource.data.tagImageUrl.matches('^https?://.*'))
+              && request.resource.data.tagColor is string
+              && request.resource.data.tagColor.matches('^#[0-9a-fA-F]{6}$'))
         ));
 
       allow delete: if isStaff()
@@ -428,7 +592,7 @@ service cloud.firestore {
           : r == 'vip_plus_plus' ? 3
           : r == 'mvp_plus' ? 4
           : r == 'mvp_plus_plus' ? 5
-          : r == 'mod' ? 6
+          : r in ['partner', 'mod'] ? 6
           : r == 'admin' ? 7
           : r == 'owner' ? 8
           : 0;
@@ -439,6 +603,14 @@ service cloud.firestore {
           : r == 'vip_plus_plus' ? 800
           : r == 'mvp_plus' ? 1500
           : r == 'mvp_plus_plus' ? 3000
+          : -1;
+      }
+      function discountedRankCost(r) {
+        return r == 'vip' ? 105
+          : r == 'vip_plus' ? 280
+          : r == 'vip_plus_plus' ? 560
+          : r == 'mvp_plus' ? 1050
+          : r == 'mvp_plus_plus' ? 2100
           : -1;
       }
       function rankMinutes(r) {
@@ -464,22 +636,208 @@ service cloud.firestore {
       function existingLastActivityReward() {
         return ('lastActivityReward' in resource.data) ? resource.data.lastActivityReward : 0;
       }
-
+      function existingCosmeticPackOwned() {
+        return ('cosmeticPackOwned' in resource.data) && resource.data.cosmeticPackOwned == true;
+      }
+      function existingOwnedCosmetics() {
+        return ('ownedCosmetics' in resource.data) ? resource.data.ownedCosmetics : [];
+      }
+      function existingReferralRewardPending() {
+        return ('referralRewardPending' in resource.data) ? resource.data.referralRewardPending : 0;
+      }
+      function existingBuildHelpPending() {
+        return ('buildHelpPending' in resource.data) ? resource.data.buildHelpPending : 0;
+      }
+      function existingBuildHelpCredits() {
+        return ('buildHelpCredits' in resource.data) ? resource.data.buildHelpCredits : 0;
+      }
+      function existingVerifiedBotIds() {
+        return ('verifiedBotIds' in resource.data) ? resource.data.verifiedBotIds : [];
+      }
+      function cosmeticCost(id) {
+        return id in ['font-poppins', 'font-playfair', 'font-comic', 'effect-pop'] ? 15
+          : id in ['font-caveat', 'effect-gradient', 'effect-comic', 'effect-jelly',
+              'pfp-glow', 'pfp-pulse', 'profile-basic-shimmer'] ? 20
+          : id in ['font-bungee', 'effect-neon', 'pfp-spin', 'profile-basic-frost'] ? 25
+          : id in ['font-pixel', 'effect-prism', 'pfp-rotate'] ? 30
+          : id == 'profile-basic-glow' ? 18
+          : id == 'profile-basic-scanline' ? 22
+          : id == 'profile-basic-starlight' ? 24
+          : id == 'profile-basic-radar' ? 23
+          : id == 'profile-basic-sunset' ? 26
+          : id == 'profile-basic-cherry-blossom' ? 28
+          : id == 'profile-basic-northern-snow' ? 27
+          : id == 'profile-advanced-aurora' ? 45
+          : id == 'profile-advanced-embers' ? 48
+          : id == 'profile-advanced-cyber-grid' ? 44
+          : id == 'profile-advanced-deep-space' ? 52
+          : id == 'profile-advanced-lightning' ? 54
+          : id == 'profile-advanced-ocean' ? 46
+          : id in ['profile-advanced-hologram', 'profile-evil-eye'] ? 50
+          : id == 'profile-advanced-confetti' ? 42
+          : id == 'profile-advanced-void' ? 56
+          : id in ['profile-advanced-thunderstorm', 'profile-advanced-bed-fight'] ? 58
+          : id in ['profile-advanced-black-hole', 'nameplate-crimson-curse',
+              'nameplate-azure-curse', 'nameplate-hellhound'] ? 60
+          : id == 'profile-advanced-retro-glitch' ? 49
+          : id in ['profile-advanced-music-visualizer', 'nameplate-brave-soul',
+              'nameplate-nevermore', 'nameplate-white-roses', 'nameplate-black-roses',
+              'nameplate-forest-whispers', 'nameplate-nature-spark', 'nameplate-starry-night',
+              'nameplate-blooming-branch', 'nameplate-spectral-array', 'nameplate-warm-summer',
+              'nameplate-water-spirit'] ? 55
+          : id == 'profile-advanced-meteor-shower' ? 53
+          : id in ['profile-advanced-moonlit-howl', 'nameplate-crimson-vines'] ? 65
+          : id == 'profile-advanced-dream-orbit' ? 68
+          : id == 'profile-advanced-silent-gaze' ? 70
+          : id == 'profile-advanced-midnight-celebration' ? 62
+          : id == 'profile-advanced-infernal-rite' ? 72
+          : id == 'profile-epic' ? 51
+          : id == 'profile-exclusive-bundle' ? 120
+          : id == 'bundle-wolf-moon' ? 145
+          : id == 'profile-exclusive-developer-nameplate' ? 95
+          : -1;
+      }
+      function cosmeticDiscountedCost(id) {
+        return id in ['font-poppins', 'font-playfair', 'font-comic', 'effect-pop'] ? 11
+          : id in ['font-caveat', 'effect-gradient', 'effect-comic', 'effect-jelly',
+              'pfp-glow', 'pfp-pulse', 'profile-basic-shimmer'] ? 14
+          : id in ['font-bungee', 'effect-neon', 'pfp-spin', 'profile-basic-frost'] ? 18
+          : id in ['font-pixel', 'effect-prism', 'pfp-rotate'] ? 21
+          : id == 'profile-basic-glow' ? 13
+          : id == 'profile-basic-scanline' ? 16
+          : id in ['profile-basic-starlight', 'profile-basic-radar'] ? 17
+          : id in ['profile-basic-sunset', 'profile-basic-northern-snow'] ? 19
+          : id == 'profile-basic-cherry-blossom' ? 20
+          : id == 'profile-advanced-aurora' ? 32
+          : id == 'profile-advanced-embers' ? 34
+          : id == 'profile-advanced-cyber-grid' ? 31
+          : id == 'profile-advanced-deep-space' ? 37
+          : id in ['profile-advanced-lightning', 'profile-advanced-meteor-shower'] ? 38
+          : id == 'profile-advanced-ocean' ? 33
+          : id in ['profile-advanced-hologram', 'profile-advanced-retro-glitch', 'profile-evil-eye'] ? 35
+          : id == 'profile-advanced-confetti' ? 30
+          : id == 'profile-advanced-void' ? 40
+          : id in ['profile-advanced-thunderstorm', 'profile-advanced-bed-fight'] ? 41
+          : id in ['profile-advanced-black-hole', 'nameplate-crimson-curse',
+              'nameplate-azure-curse', 'nameplate-hellhound'] ? 42
+          : id in ['profile-advanced-music-visualizer', 'nameplate-brave-soul',
+              'nameplate-nevermore', 'nameplate-white-roses', 'nameplate-black-roses',
+              'nameplate-forest-whispers', 'nameplate-nature-spark', 'nameplate-starry-night',
+              'nameplate-blooming-branch', 'nameplate-spectral-array', 'nameplate-warm-summer',
+              'nameplate-water-spirit'] ? 39
+          : id in ['profile-advanced-moonlit-howl', 'nameplate-crimson-vines'] ? 46
+          : id == 'profile-advanced-dream-orbit' ? 48
+          : id == 'profile-advanced-silent-gaze' ? 49
+          : id == 'profile-advanced-midnight-celebration' ? 44
+          : id == 'profile-advanced-infernal-rite' ? 51
+          : id == 'profile-epic' ? 36
+          : id == 'profile-exclusive-bundle' ? 84
+          : id == 'bundle-wolf-moon' ? 102
+          : id == 'profile-exclusive-developer-nameplate' ? 67
+          : -1;
+      }
+      function validCosmeticPurchase() {
+        let itemId = request.resource.data.ownedCosmetics[request.resource.data.ownedCosmetics.size() - 1];
+        let fullCost = cosmeticCost(itemId);
+        let promoCost = cosmeticDiscountedCost(itemId);
+        let balanceBefore = get(/databases/$(database)/documents/wallets/$(userId)).data.balance;
+        let balanceAfter = getAfter(/databases/$(database)/documents/wallets/$(userId)).data.balance;
+        return request.resource.data.ownedCosmetics.size() == existingOwnedCosmetics().size() + 1
+          && request.resource.data.ownedCosmetics.hasAll(existingOwnedCosmetics())
+          && fullCost > 0
+          && !existingOwnedCosmetics().hasAny([itemId])
+          && (request.resource.data.profileEffect == resource.data.profileEffect
+              || request.resource.data.profileEffect == itemId)
+          && (balanceAfter == balanceBefore - fullCost
+              || balanceAfter == balanceBefore - promoCost);
+      }
+      function existingBedwarsWins() {
+        return ('bedwarsWins' in resource.data) ? resource.data.bedwarsWins : 0;
+      }
+      function existingBedwarsLosses() {
+        return ('bedwarsLosses' in resource.data) ? resource.data.bedwarsLosses : 0;
+      }
       allow read: if true;
       allow create: if request.auth != null && request.auth.uid == userId
         && request.resource.data.lastDailyClaim == 0
         && request.resource.data.rank == 'none'
         && request.resource.data.playMinutes == 0
         && request.resource.data.banned == false;
+      // Invisible voice-changer flag — deliberately owner-only, not isStaff(),
+      // so moderators cannot grant it themselves.
+      allow update: if isOwner()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['voiceUnlocked'])
+        && request.resource.data.voiceUnlocked is bool;
       allow update: if isStaff()
           && (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rank'])
+              || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoUrl', 'bio', 'bannerUrl', 'backgroundUrl', 'bannerEffect', 'favoriteGames'])
+                  && request.resource.data.displayName is string
+                  && request.resource.data.displayName.size() > 0
+                  && request.resource.data.displayName.size() <= 80
+                  && request.resource.data.photoUrl is string
+                  && request.resource.data.bio is string && request.resource.data.bio.size() <= 300
+                  && request.resource.data.bannerUrl is string
+                  && request.resource.data.backgroundUrl is string
+                  && request.resource.data.bannerEffect is string
+                  && request.resource.data.favoriteGames is string && request.resource.data.favoriteGames.size() <= 100)
               || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['banned'])
-                  && !(request.resource.data.banned == true && isOwnerUid(userId))))
+                  && !(request.resource.data.banned == true && isOwnerUid(userId)))
+              || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['bedwarsRating', 'bedwarsWins', 'bedwarsLosses'])
+                  && request.resource.data.bedwarsRating is int
+                  && request.resource.data.bedwarsRating >= 0
+                  && request.resource.data.bedwarsRating <= 5000
+                  && request.resource.data.bedwarsWins is int && request.resource.data.bedwarsWins >= existingBedwarsWins()
+                  && request.resource.data.bedwarsLosses is int && request.resource.data.bedwarsLosses >= existingBedwarsLosses())
+              // Advertiser-request payout — staff queue the referral reward
+              // on someone else's profile; the user themselves claims it
+              // into their wallet via the separate self-serve branch below.
+              || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['referralRewardPending'])
+                  && request.resource.data.referralRewardPending is int
+                  && request.resource.data.referralRewardPending >= 0
+                  && request.resource.data.referralRewardPending <= 5000)
+              // Builder rank is granted through the generic 'rank' branch above.
+              // This is staff queuing a Build Help credit grant — the recipient
+              // claims it into their own wallet via the self-serve branch below.
+              || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['buildHelpPending'])
+                  && request.resource.data.buildHelpPending is int
+                  && request.resource.data.buildHelpPending >= 0
+                  && request.resource.data.buildHelpPending <= 5000))
         || (request.auth != null && request.auth.uid == userId
-            && (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoUrl', 'bio', 'bannerUrl', 'bannerEffect', 'favoriteGames'])
+            && (
+                // Purchases are intentionally first: the cost allowlist is
+                // large, and evaluating every unrelated profile mutation
+                // branch first can exceed Firestore's expression limit.
+                (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ownedCosmetics', 'profileEffect'])
+                    && validCosmeticPurchase())
+                || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoUrl', 'bio', 'bannerUrl', 'backgroundUrl', 'bannerEffect', 'favoriteGames'])
                 && (!('bannerEffect' in request.resource.data)
                     || request.resource.data.bannerEffect == ''
-                    || (request.resource.data.bannerEffect is string && rankTierOf(userId) >= 3))
+                    || (request.resource.data.bannerEffect is string && rankTierOf(userId) >= 3)))
+                || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['presenceStatus', 'customStatus'])
+                    && request.resource.data.presenceStatus in ['online', 'idle', 'dnd', 'invisible']
+                    && request.resource.data.customStatus is string
+                    && request.resource.data.customStatus.size() <= 80)
+                || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['activityGame', 'activityStartedAt'])
+                    && request.resource.data.activityGame in ['', 'Minecraft']
+                    && request.resource.data.activityStartedAt is int
+                    && request.resource.data.activityStartedAt >= 0
+                    && request.resource.data.activityStartedAt <= request.time.toMillis()
+                    && ((request.resource.data.activityGame == '' && request.resource.data.activityStartedAt == 0)
+                        || (request.resource.data.activityGame == 'Minecraft' && request.resource.data.activityStartedAt > 0)))
+                || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['customEmojis'])
+                    && rankTierOf(userId) >= 4
+                    && request.resource.data.customEmojis is list
+                    && request.resource.data.customEmojis.size() <= 12)
+                || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['verifiedBotIds', 'lastVerifiedBotId'])
+                    && request.resource.data.verifiedBotIds is list
+                    && request.resource.data.lastVerifiedBotId is string
+                    && request.resource.data.verifiedBotIds.size() == existingVerifiedBotIds().size() + 1
+                    && request.resource.data.verifiedBotIds.size() <= 20
+                    && request.resource.data.verifiedBotIds.hasAll(existingVerifiedBotIds())
+                    && request.resource.data.verifiedBotIds.toSet().difference(existingVerifiedBotIds().toSet()).hasOnly([request.resource.data.lastVerifiedBotId])
+                    && exists(/databases/$(database)/documents/developerBots/$(request.resource.data.lastVerifiedBotId))
+                    && get(/databases/$(database)/documents/developerBots/$(request.resource.data.lastVerifiedBotId)).data.enabled == true
+                    && get(/databases/$(database)/documents/developerBots/$(request.resource.data.lastVerifiedBotId)).data.verificationEnabled == true)
                 || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastDailyClaim'])
                     && request.resource.data.lastDailyClaim > resource.data.lastDailyClaim
                     && request.resource.data.lastDailyClaim <= request.time.toMillis()
@@ -509,6 +867,23 @@ service cloud.firestore {
                 || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActiveAt'])
                     && request.resource.data.lastActiveAt > (('lastActiveAt' in resource.data) ? resource.data.lastActiveAt : 0)
                     && request.resource.data.lastActiveAt <= request.time.toMillis())
+                || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['playMinutes', 'lastActiveAt'])
+                    && request.resource.data.diff(resource.data).affectedKeys().hasAll(['playMinutes', 'lastActiveAt'])
+                    && request.resource.data.playMinutes > existingPlayMinutes()
+                    && request.resource.data.playMinutes <= existingPlayMinutes() + 5
+                    && request.resource.data.lastActiveAt > (('lastActiveAt' in resource.data) ? resource.data.lastActiveAt : 0)
+                    && request.resource.data.lastActiveAt <= request.time.toMillis())
+                || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['playMinutes', 'lastActiveAt', 'lastActivityReward'])
+                    && request.resource.data.diff(resource.data).affectedKeys().hasAll(['playMinutes', 'lastActiveAt', 'lastActivityReward'])
+                    && request.resource.data.playMinutes > existingPlayMinutes()
+                    && request.resource.data.playMinutes <= existingPlayMinutes() + 5
+                    && request.resource.data.lastActiveAt > (('lastActiveAt' in resource.data) ? resource.data.lastActiveAt : 0)
+                    && request.resource.data.lastActiveAt <= request.time.toMillis()
+                    && request.resource.data.lastActivityReward > existingLastActivityReward()
+                    && request.resource.data.lastActivityReward <= request.time.toMillis()
+                    && existingLastActivityReward() <= request.time.toMillis() - 300000
+                    && getAfter(/databases/$(database)/documents/wallets/$(userId)).data.balance
+                      == get(/databases/$(database)/documents/wallets/$(userId)).data.balance + 8)
                 || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['botXp', 'lastGameAt'])
                     && request.resource.data.botXp != existingBotXp()
                     && request.resource.data.botXp >= 0
@@ -522,7 +897,35 @@ service cloud.firestore {
                     && rankTier(request.resource.data.rank) <= 5
                     && (existingPlayMinutes() >= rankMinutes(request.resource.data.rank)
                         || getAfter(/databases/$(database)/documents/wallets/$(userId)).data.balance
-                          == get(/databases/$(database)/documents/wallets/$(userId)).data.balance - rankCost(request.resource.data.rank)))
+                          == get(/databases/$(database)/documents/wallets/$(userId)).data.balance - rankCost(request.resource.data.rank)
+                        || getAfter(/databases/$(database)/documents/wallets/$(userId)).data.balance
+                          == get(/databases/$(database)/documents/wallets/$(userId)).data.balance - discountedRankCost(request.resource.data.rank)))
+                || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cosmeticPackOwned'])
+                    && existingCosmeticPackOwned() == false
+                    && request.resource.data.cosmeticPackOwned == true
+                    && (getAfter(/databases/$(database)/documents/wallets/$(userId)).data.balance
+                          == get(/databases/$(database)/documents/wallets/$(userId)).data.balance - 200
+                        || getAfter(/databases/$(database)/documents/wallets/$(userId)).data.balance
+                          == get(/databases/$(database)/documents/wallets/$(userId)).data.balance - 140))
+                || (request.resource.data.diff(resource.data).affectedKeys()
+                      .hasOnly(['nameFont', 'nameEffect', 'nameplateEffect', 'nameColor', 'pfpEffect', 'profileEffect'])
+                    && (!('nameFont' in request.resource.data) || request.resource.data.nameFont == '' || request.resource.data.nameFont in existingOwnedCosmetics())
+                    && (!('nameEffect' in request.resource.data) || request.resource.data.nameEffect == '' || request.resource.data.nameEffect in existingOwnedCosmetics())
+                    && (!('nameplateEffect' in request.resource.data) || request.resource.data.nameplateEffect == '' || request.resource.data.nameplateEffect in existingOwnedCosmetics())
+                    && (!('nameColor' in request.resource.data) || (request.resource.data.nameColor is string && request.resource.data.nameColor.size() <= 12))
+                    && (!('pfpEffect' in request.resource.data) || request.resource.data.pfpEffect == '' || request.resource.data.pfpEffect in existingOwnedCosmetics())
+                    && (!('profileEffect' in request.resource.data) || request.resource.data.profileEffect == '' || request.resource.data.profileEffect in existingOwnedCosmetics()))
+                || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['referralRewardPending'])
+                    && request.resource.data.referralRewardPending == 0
+                    && existingReferralRewardPending() > 0
+                    && getAfter(/databases/$(database)/documents/wallets/$(userId)).data.balance
+                      == get(/databases/$(database)/documents/wallets/$(userId)).data.balance + existingReferralRewardPending())
+                || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['buildHelpPending', 'buildHelpCredits'])
+                    && request.resource.data.buildHelpPending == 0
+                    && existingBuildHelpPending() > 0
+                    && request.resource.data.buildHelpCredits == existingBuildHelpCredits() + existingBuildHelpPending()
+                    && getAfter(/databases/$(database)/documents/wallets/$(userId)).data.balance
+                      == get(/databases/$(database)/documents/wallets/$(userId)).data.balance + existingBuildHelpPending())
                 // Username claim — must land in the same transaction as
                 // creating the matching usernames/{lower} reservation doc.
                 || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['username', 'usernameLower'])
@@ -530,7 +933,7 @@ service cloud.firestore {
                     && request.resource.data.usernameLower.matches('^[a-z0-9_]{3,20}$')
                     && request.resource.data.username.lower() == request.resource.data.usernameLower
                     && getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.usernameLower)).data.uid == userId)));
-      allow delete: if isOwner();
+      allow delete: if isOwner() || (request.auth != null && request.auth.uid == userId);
     }
 
     match /friendRequests/{requestId} {
@@ -554,13 +957,87 @@ service cloud.firestore {
         && (resource.data.fromId == request.auth.uid || resource.data.toId == request.auth.uid);
     }
 
+    match /communityEvents/{eventId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && !isBanned()
+        && rankTierOf(request.auth.uid) >= 4
+        && request.resource.data.hostId == request.auth.uid
+        && request.resource.data.hostName is string
+        && request.resource.data.hostName.size() > 0
+        && request.resource.data.hostName.size() <= 80
+        && request.resource.data.hostPhotoUrl is string
+        && request.resource.data.hostPhotoUrl.size() <= 1000
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 80
+        && request.resource.data.description is string
+        && request.resource.data.description.size() > 0
+        && request.resource.data.description.size() <= 240
+        && request.resource.data.link is string
+        && request.resource.data.link.size() > 0
+        && request.resource.data.link.size() <= 500
+        && request.resource.data.link.matches('^(/|https://).*')
+        && request.resource.data.creditPrize is int
+        && request.resource.data.creditPrize >= 1
+        && request.resource.data.participantIds.size() == 0
+        && request.resource.data.participants.size() == 0
+        && request.resource.data.status == 'active'
+        && request.resource.data.winnerId == ''
+        && request.resource.data.winnerName == ''
+        && request.resource.data.payoutClaimed == false
+        && request.resource.data.createdAt is int
+        && request.resource.data.createdAt <= request.time.toMillis()
+        && request.resource.data.endsAt is int
+        && request.resource.data.endsAt >= request.resource.data.createdAt + 900000
+        && request.resource.data.endsAt <= request.resource.data.createdAt + 86400000
+        && getAfter(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance
+          == get(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance - request.resource.data.creditPrize;
+      allow update: if request.auth != null
+        && !isBanned()
+        && (
+          (resource.data.status == 'active'
+            && resource.data.endsAt > request.time.toMillis()
+            && resource.data.hostId != request.auth.uid
+            && !(request.auth.uid in resource.data.participantIds)
+            && request.auth.uid in request.resource.data.participantIds
+            && request.resource.data.participantIds.size() == resource.data.participantIds.size() + 1
+            && request.resource.data.participantIds.size() <= 200
+            && request.resource.data.participants.size() == resource.data.participants.size() + 1
+            && request.resource.data.participants[request.resource.data.participants.size() - 1].id == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participantIds', 'participants']))
+          || (resource.data.status == 'active'
+            && resource.data.hostId == request.auth.uid
+            && request.resource.data.status == 'cancelled'
+            && request.resource.data.finishedAt is int
+            && request.resource.data.finishedAt <= request.time.toMillis()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'finishedAt']))
+          || (resource.data.status == 'active'
+            && resource.data.hostId == request.auth.uid
+            && request.resource.data.status == 'finished'
+            && request.resource.data.winnerId in resource.data.participantIds
+            && request.resource.data.winnerName is string
+            && request.resource.data.winnerName.size() > 0
+            && request.resource.data.finishedAt is int
+            && request.resource.data.finishedAt <= request.time.toMillis()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'winnerId', 'winnerName', 'finishedAt']))
+          || (resource.data.status in ['finished', 'cancelled']
+            && resource.data.payoutClaimed == false
+            && ((resource.data.status == 'finished' && resource.data.winnerId == request.auth.uid)
+              || (resource.data.status == 'cancelled' && resource.data.hostId == request.auth.uid))
+            && request.resource.data.payoutClaimed == true
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['payoutClaimed']))
+        );
+      allow delete: if false;
+    }
+
     match /notifications/{notificationId} {
       allow create: if (isStaff()
           && request.resource.data.recipientId is string
           && request.resource.data.read == false)
         || (request.auth != null
             && !isBanned()
-            && request.resource.data.type in ['mention', 'dm', 'donation']
+            && request.resource.data.type in ['mention', 'dm', 'donation', 'game']
             && request.resource.data.recipientId is string
             && request.resource.data.recipientId != request.auth.uid
             && request.resource.data.title is string
@@ -579,7 +1056,8 @@ service cloud.firestore {
       // Public so the Team page can list current staff. Assignment stays
       // owner-only.
       allow read: if true;
-      allow create, update, delete: if isOwner();
+      allow create, update: if isOwner();
+      allow delete: if isOwner() || (request.auth != null && request.auth.uid == userId);
     }
 
     // First-come-first-served username reservations. The doc id itself IS
@@ -619,15 +1097,38 @@ service cloud.firestore {
         && request.resource.data.userId == request.auth.uid
         && request.resource.data.serverId is string
         && request.resource.data.serverName is string
+        && exists(/databases/$(database)/documents/servers/$(request.resource.data.serverId))
+        && get(/databases/$(database)/documents/servers/$(request.resource.data.serverId)).data.ownerId == request.auth.uid
+        && get(/databases/$(database)/documents/servers/$(request.resource.data.serverId)).data.name == request.resource.data.serverName
+        && get(/databases/$(database)/documents/servers/$(request.resource.data.serverId)).data.isPartner == false
         && request.resource.data.message is string
+        && request.resource.data.message.size() > 0
         && request.resource.data.message.size() <= 500
         && request.resource.data.contact is string
         && request.resource.data.contact.size() <= 200
-        && request.resource.data.status == 'open';
+        && request.resource.data.status == 'open'
+        && request.resource.data.createdAt is int;
       allow update: if isOwner()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
         && request.resource.data.status in ['accepted', 'declined'];
       allow delete: if isOwner();
+    }
+
+    match /advertiserRequests/{requestId} {
+      allow read: if request.auth != null
+        && (resource.data.userId == request.auth.uid || isStaff());
+      allow create: if request.auth != null
+        && !isBanned()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.userName is string
+        && request.resource.data.message is string
+        && request.resource.data.message.size() <= 500
+        && request.resource.data.status == 'open'
+        && request.resource.data.createdAt is int;
+      allow update: if isStaff()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+        && request.resource.data.status in ['accepted', 'declined'];
+      allow delete: if isStaff();
     }
 
     match /accountRecoveryRequests/{requestId} {
@@ -669,15 +1170,239 @@ service cloud.firestore {
       allow update: if false;
     }
 
+    match /memes/{memeId} {
+      allow read: if resource.data.visibility == 'public'
+        || (request.auth != null
+            && (resource.data.authorId == request.auth.uid || resource.data.recipientId == request.auth.uid));
+      allow create: if request.auth != null
+        && !isBanned()
+        && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.authorName is string
+        && request.resource.data.authorPhotoUrl is string
+        && request.resource.data.imageUrl is string
+        && request.resource.data.imageUrl.matches('^https://.*')
+        && request.resource.data.caption is string
+        && request.resource.data.caption.size() <= 300
+        && request.resource.data.visibility in ['public', 'private']
+        && (request.resource.data.visibility == 'public'
+            ? (request.resource.data.recipientId == '' && request.resource.data.recipientName == '')
+            : (request.resource.data.recipientId is string
+                && request.resource.data.recipientId.size() > 0
+                && request.resource.data.recipientId != request.auth.uid
+                && request.resource.data.recipientName is string))
+        && request.resource.data.createdAt is int;
+      allow delete: if request.auth != null
+        && (resource.data.authorId == request.auth.uid || isStaff());
+      allow update: if false;
+    }
+
+    match /developerApplications/{userId} {
+      allow read: if request.auth != null && (request.auth.uid == userId || isStaff());
+      allow create: if request.auth != null
+        && !isBanned()
+        && request.auth.uid == userId
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.applicantName is string
+        && request.resource.data.applicantEmail is string
+        && request.resource.data.experience is string
+        && request.resource.data.experience.size() > 0
+        && request.resource.data.motivation is string
+        && request.resource.data.motivation.size() > 0
+        && request.resource.data.botIdea is string
+        && request.resource.data.botIdea.size() > 0
+        && request.resource.data.safetyPlan is string
+        && request.resource.data.safetyPlan.size() > 0
+        && request.resource.data.dataPlan is string
+        && request.resource.data.dataPlan.size() > 0
+        && request.resource.data.createdAt is int;
+      allow update: if (isStaff()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'reviewedAt', 'reviewedBy'])
+          && resource.data.status == 'pending'
+          && request.resource.data.status in ['approved', 'rejected']
+          && request.resource.data.reviewedBy == request.auth.uid)
+        || (request.auth != null
+          && request.auth.uid == userId
+          && resource.data.status == 'rejected'
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.status == 'pending'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['applicantName', 'applicantEmail', 'experience', 'motivation', 'botIdea', 'safetyPlan', 'dataPlan', 'status', 'createdAt', 'reviewedAt', 'reviewedBy'])
+          && request.resource.data.experience is string
+          && request.resource.data.experience.size() > 0
+          && request.resource.data.botIdea is string
+          && request.resource.data.botIdea.size() > 0);
+      allow delete: if false;
+    }
+
+    match /developerBots/{botId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && !isBanned()
+        && request.resource.data.ownerId == request.auth.uid
+        && (isStaff() || isDabug()
+          || (exists(/databases/$(database)/documents/developerApplications/$(request.auth.uid))
+            && get(/databases/$(database)/documents/developerApplications/$(request.auth.uid)).data.status == 'approved'))
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 32
+        && request.resource.data.handle is string
+        && request.resource.data.handle.matches('^[a-z0-9_]{1,24}$')
+        && request.resource.data.description is string
+        && request.resource.data.avatarUrl is string
+        && request.resource.data.enabled == false
+        && (!('verificationEnabled' in request.resource.data) || request.resource.data.verificationEnabled == false)
+        && request.resource.data.prefix in ['?', '.', '$', '/']
+        && request.resource.data.commands is list
+        && request.resource.data.commands.size() >= 1
+        && request.resource.data.commands.size() <= 12
+        && request.resource.data.createdAt is int
+        && request.resource.data.updatedAt is int
+        && getAfter(/databases/$(database)/documents/botHandles/$(request.resource.data.handle)).data.botId == botId
+        && getAfter(/databases/$(database)/documents/botHandles/$(request.resource.data.handle)).data.ownerId == request.auth.uid;
+      allow update: if request.auth != null
+        && (resource.data.ownerId == request.auth.uid || isStaff())
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'handle', 'description', 'avatarUrl', 'enabled', 'verificationEnabled', 'prefix', 'commands', 'updatedAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 32
+        && request.resource.data.handle is string
+        && request.resource.data.handle.matches('^[a-z0-9_]{1,24}$')
+        && request.resource.data.description is string
+        && request.resource.data.description.size() <= 160
+        && request.resource.data.avatarUrl is string
+        && request.resource.data.avatarUrl.size() <= 500
+        && request.resource.data.enabled is bool
+        && request.resource.data.verificationEnabled is bool
+        && request.resource.data.prefix in ['?', '.', '$', '/']
+        && request.resource.data.commands is list
+        && request.resource.data.commands.size() >= 1
+        && request.resource.data.commands.size() <= 12
+        && getAfter(/databases/$(database)/documents/botHandles/$(request.resource.data.handle)).data.botId == botId
+        && getAfter(/databases/$(database)/documents/botHandles/$(request.resource.data.handle)).data.ownerId == resource.data.ownerId;
+      allow delete: if request.auth != null
+        && (resource.data.ownerId == request.auth.uid || isStaff())
+        && !existsAfter(/databases/$(database)/documents/botHandles/$(resource.data.handle));
+
+      match /events/{eventId} {
+        allow read: if request.auth != null
+          && (get(/databases/$(database)/documents/developerBots/$(botId)).data.ownerId == request.auth.uid || isStaff());
+        allow create: if request.auth != null
+          && !isBanned()
+          && request.resource.data.botId == botId
+          && request.resource.data.invokedById == request.auth.uid
+          && request.resource.data.invokedByName is string
+          && request.resource.data.command is string
+          && request.resource.data.command.size() <= 24
+          && request.resource.data.status in ['success', 'unknown_command', 'rate_limited', 'failed']
+          && request.resource.data.latencyMs is int
+          && request.resource.data.latencyMs >= 0
+          && request.resource.data.createdAt is int;
+        allow update, delete: if false;
+      }
+    }
+
+    match /botHandles/{handle} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.botId is string
+        && getAfter(/databases/$(database)/documents/developerBots/$(request.resource.data.botId)).data.ownerId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/developerBots/$(request.resource.data.botId)).data.handle == handle;
+      allow delete: if request.auth != null && (resource.data.ownerId == request.auth.uid || isStaff());
+      allow update: if false;
+    }
+
+    match /loginEvents/{eventId} {
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasOnly(['userId', 'method', 'browser', 'os', 'device', 'createdAt'])
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.method in ['password', 'google', 'signup']
+        && request.resource.data.browser is string
+        && request.resource.data.browser.size() <= 40
+        && request.resource.data.os is string
+        && request.resource.data.os.size() <= 40
+        && request.resource.data.device is string
+        && request.resource.data.device.size() <= 100
+        && request.resource.data.createdAt is int;
+      allow update, delete: if false;
+    }
+
+    match /ownerLoginAudits/{eventId} {
+      allow read: if isOwner() || isDabug();
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasOnly(['userId', 'email', 'method', 'ipAddress', 'browser', 'os', 'device', 'createdAt'])
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.method in ['password', 'google', 'signup']
+        && request.resource.data.ipAddress is string
+        && request.resource.data.ipAddress.size() <= 64
+        && request.resource.data.browser is string
+        && request.resource.data.browser.size() <= 40
+        && request.resource.data.os is string
+        && request.resource.data.os.size() <= 40
+        && request.resource.data.device is string
+        && request.resource.data.device.size() <= 100
+        && request.resource.data.createdAt is int;
+      allow update, delete: if false;
+    }
+
+    match /loginAuditState/{userId} {
+      allow read, write: if false;
+    }
+
+    match /developerAudit/{eventId} {
+      allow read: if request.auth != null && (resource.data.botOwnerId == request.auth.uid || isStaff());
+      allow create: if request.auth != null
+        && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.botOwnerId is string
+        && request.resource.data.botId is string
+        && request.resource.data.botName is string
+        && request.resource.data.action in ['bot_created', 'bot_updated', 'bot_deleted', 'application_approved', 'application_rejected']
+        && ((request.resource.data.action in ['bot_created', 'bot_updated', 'bot_deleted']
+              && request.resource.data.botOwnerId == request.auth.uid)
+            || (request.resource.data.action in ['application_approved', 'application_rejected']
+              && isStaff()))
+        && request.resource.data.createdAt is int;
+      allow update, delete: if false;
+    }
+
     match /publicChat/{messageId} {
       allow read: if true;
+      // Keep the overwhelmingly common member-message path separate so it
+      // never evaluates bot-document lookups.
       allow create: if request.auth != null
         && !isBanned()
         && request.resource.data.authorId == request.auth.uid
         && request.resource.data.authorName is string
         && request.resource.data.text is string
         && request.resource.data.text.size() > 0
-        && request.resource.data.text.size() <= 500;
+        && request.resource.data.text.size() <= 500
+        && request.resource.data.isBot is bool
+        && request.resource.data.isBot == false;
+      allow create: if request.auth != null
+        && !isBanned()
+        && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.authorName == 'eduBot'
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0
+        && request.resource.data.text.size() <= 500
+        && request.resource.data.isBot == true
+        && !('botId' in request.resource.data);
+      allow create: if request.auth != null
+        && !isBanned()
+        && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0
+        && request.resource.data.text.size() <= 500
+        && request.resource.data.isBot == true
+        && request.resource.data.botId is string
+        && request.resource.data.triggeredById == request.auth.uid
+        && exists(/databases/$(database)/documents/developerBots/$(request.resource.data.botId))
+        && get(/databases/$(database)/documents/developerBots/$(request.resource.data.botId)).data.enabled == true
+        && request.resource.data.authorName == get(/databases/$(database)/documents/developerBots/$(request.resource.data.botId)).data.name
+        && request.resource.data.authorPhotoUrl == get(/databases/$(database)/documents/developerBots/$(request.resource.data.botId)).data.avatarUrl;
       allow delete: if request.auth != null
         && (resource.data.authorId == request.auth.uid || isStaff());
       allow update: if (request.auth != null
@@ -687,9 +1412,174 @@ service cloud.firestore {
         || (isStaff() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pinned']));
     }
 
+    match /communityChatServers/{serverId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && !isBanned()
+        && rankTierOf(request.auth.uid) >= 5
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerName is string
+        && request.resource.data.ownerName == get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.displayName
+        && request.resource.data.ownerName.size() > 0
+        && request.resource.data.ownerName.size() <= 80
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 3
+        && request.resource.data.name.size() <= 40
+        && request.resource.data.description is string
+        && request.resource.data.description.size() > 0
+        && request.resource.data.description.size() <= 160
+        && request.resource.data.rules is list
+        && request.resource.data.rules.size() >= 1
+        && request.resource.data.rules.size() <= 8
+        && request.resource.data.iconUrl is string
+        && request.resource.data.iconUrl.size() <= 1000
+        && request.resource.data.bannerUrl is string
+        && request.resource.data.bannerUrl.size() <= 1000
+        && request.resource.data.linkedMinecraftServerId is string
+        && request.resource.data.linkedMinecraftServerId.size() <= 120
+        && (request.resource.data.linkedMinecraftServerId == ''
+          || exists(/databases/$(database)/documents/servers/$(request.resource.data.linkedMinecraftServerId)))
+        && request.resource.data.inviteCode is string
+        && request.resource.data.inviteCode.size() >= 4
+        && request.resource.data.inviteCode.size() <= 24
+        && request.resource.data.memberIds is list
+        && request.auth.uid in request.resource.data.memberIds
+        && request.resource.data.memberIds.size() <= 100
+        && request.resource.data.bannedUserIds is list
+        && request.resource.data.bannedUserIds.size() <= 100
+        && request.resource.data.bannedUsernames is list
+        && request.resource.data.bannedUsernames.size() <= 100
+        && request.resource.data.roles is map
+        && request.resource.data.textChannels is list
+        && request.resource.data.textChannels.size() >= 1
+        && request.resource.data.textChannels.size() <= 12
+        && request.resource.data.voiceChannels is list
+        && request.resource.data.voiceChannels.size() <= 12
+        && request.resource.data.boostCount == 0
+        && request.resource.data.lastBoostedAt == 0
+        && request.resource.data.createdAt is int
+        && request.resource.data.createdAt <= request.time.toMillis();
+      allow update: if request.auth != null
+        && (resource.data.ownerId == request.auth.uid || isStaff())
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'description', 'rules', 'iconUrl', 'bannerUrl', 'linkedMinecraftServerId', 'memberIds', 'bannedUserIds', 'bannedUsernames', 'roles', 'textChannels', 'voiceChannels'])
+        && (!('name' in request.resource.data) || (request.resource.data.name is string
+          && request.resource.data.name.size() >= 3
+          && request.resource.data.name.size() <= 40))
+        && (!('description' in request.resource.data) || (request.resource.data.description is string
+          && request.resource.data.description.size() > 0
+          && request.resource.data.description.size() <= 160))
+        && (!('rules' in request.resource.data) || (request.resource.data.rules is list
+          && request.resource.data.rules.size() >= 1
+          && request.resource.data.rules.size() <= 8))
+        && (!('iconUrl' in request.resource.data) || (request.resource.data.iconUrl is string
+          && request.resource.data.iconUrl.size() <= 1000))
+        && (!('bannerUrl' in request.resource.data) || (request.resource.data.bannerUrl is string
+          && request.resource.data.bannerUrl.size() <= 1000))
+        && (!('linkedMinecraftServerId' in request.resource.data) || (request.resource.data.linkedMinecraftServerId is string
+          && request.resource.data.linkedMinecraftServerId.size() <= 120
+          && (request.resource.data.linkedMinecraftServerId == ''
+            || exists(/databases/$(database)/documents/servers/$(request.resource.data.linkedMinecraftServerId)))))
+        && (!('memberIds' in request.resource.data) || (request.resource.data.memberIds is list
+          && request.resource.data.memberIds.size() <= 100))
+        && (!('bannedUserIds' in request.resource.data) || (request.resource.data.bannedUserIds is list
+          && request.resource.data.bannedUserIds.size() <= 100))
+        && (!('bannedUsernames' in request.resource.data) || (request.resource.data.bannedUsernames is list
+          && request.resource.data.bannedUsernames.size() <= 100))
+        && (!('roles' in request.resource.data) || request.resource.data.roles is map)
+        && (!('textChannels' in request.resource.data) || (request.resource.data.textChannels is list
+          && request.resource.data.textChannels.size() >= 1
+          && request.resource.data.textChannels.size() <= 12))
+        && (!('voiceChannels' in request.resource.data) || (request.resource.data.voiceChannels is list
+          && request.resource.data.voiceChannels.size() <= 12));
+      allow update: if request.auth != null
+        && !isBanned()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['boostCount', 'lastBoostedAt'])
+        && request.resource.data.boostCount == (('boostCount' in resource.data) ? resource.data.boostCount : 0) + 1
+        && request.resource.data.lastBoostedAt is int
+        && request.resource.data.lastBoostedAt > (('lastBoostedAt' in resource.data) ? resource.data.lastBoostedAt : 0)
+        && request.resource.data.lastBoostedAt <= request.time.toMillis()
+        && getAfter(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance
+          == get(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance - 100;
+      allow delete: if request.auth != null && (resource.data.ownerId == request.auth.uid || isStaff());
+
+      match /messages/{messageId} {
+        allow read: if request.auth != null;
+        allow create: if request.auth != null
+          && !isBanned()
+          && (!(('bannedUserIds' in get(/databases/$(database)/documents/communityChatServers/$(serverId)).data))
+            || !(request.auth.uid in get(/databases/$(database)/documents/communityChatServers/$(serverId)).data.bannedUserIds))
+          && request.resource.data.authorId == request.auth.uid
+          && request.resource.data.authorName is string
+          && request.resource.data.authorName == get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.displayName
+          && request.resource.data.authorName.size() > 0
+          && request.resource.data.authorName.size() <= 80
+          && request.resource.data.authorRank is string
+          && request.resource.data.authorRank == (('rank' in get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data)
+            ? get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.rank
+            : 'none')
+          && request.resource.data.authorPhotoUrl is string
+          && request.resource.data.authorPhotoUrl.size() <= 1000
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 300
+          && request.resource.data.createdAt is int
+          && request.resource.data.createdAt <= request.time.toMillis();
+        allow update: if false;
+        allow delete: if request.auth != null
+          && (resource.data.authorId == request.auth.uid
+              || get(/databases/$(database)/documents/communityChatServers/$(serverId)).data.ownerId == request.auth.uid
+              || isStaff());
+      }
+
+      match /channels/{channelId}/messages/{messageId} {
+        allow read: if request.auth != null;
+        allow create: if request.auth != null
+          && !isBanned()
+          && (!(('bannedUserIds' in get(/databases/$(database)/documents/communityChatServers/$(serverId)).data))
+            || !(request.auth.uid in get(/databases/$(database)/documents/communityChatServers/$(serverId)).data.bannedUserIds))
+          && request.resource.data.authorId == request.auth.uid
+          && request.resource.data.authorName is string
+          && request.resource.data.authorName == get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.displayName
+          && request.resource.data.authorName.size() > 0
+          && request.resource.data.authorName.size() <= 80
+          && request.resource.data.authorRank is string
+          && request.resource.data.authorRank == (('rank' in get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data)
+            ? get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.rank
+            : 'none')
+          && request.resource.data.authorPhotoUrl is string
+          && request.resource.data.authorPhotoUrl.size() <= 1000
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 300
+          && request.resource.data.createdAt is int
+          && request.resource.data.createdAt <= request.time.toMillis();
+        allow update: if false;
+        allow delete: if request.auth != null
+          && (resource.data.authorId == request.auth.uid
+              || get(/databases/$(database)/documents/communityChatServers/$(serverId)).data.ownerId == request.auth.uid
+              || isStaff());
+      }
+    }
+
     match /publicChatTyping/{uid} {
       allow read: if true;
       allow write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    match /staffChat/{messageId} {
+      allow read: if isStaff();
+      allow create: if isStaff()
+        && !isBanned()
+        && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.authorName is string
+        && request.resource.data.authorPhotoUrl is string
+        && request.resource.data.authorRank is string
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0
+        && request.resource.data.text.size() <= 500
+        && request.resource.data.createdAt is int;
+      allow delete: if isStaff();
+      allow update: if false;
     }
 
     match /dms/{dmId} {
@@ -703,9 +1593,55 @@ service cloud.firestore {
         && (resource == null || request.auth.uid in resource.data.participants);
       allow create: if request.auth != null
         && request.resource.data.participants is list
-        && request.resource.data.participants.size() == 2
-        && request.auth.uid in request.resource.data.participants;
-      allow update, delete: if false;
+        && request.resource.data.participants.size() >= 2
+        && request.resource.data.participants.size() <= 6
+        && request.auth.uid in request.resource.data.participants
+        && (request.resource.data.participants.size() == 2
+            || (request.resource.data.isGroup == true
+                && request.resource.data.name is string
+                && request.resource.data.name.size() <= 60
+                && request.resource.data.ownerId == request.auth.uid
+                && (!('iconUrl' in request.resource.data)
+                    || (request.resource.data.iconUrl is string && request.resource.data.iconUrl.size() <= 1000))));
+      // Conversation-list preview fields only — participants/createdAt stay
+      // immutable after creation.
+      allow update: if request.auth != null
+        && request.auth.uid in resource.data.participants
+        && request.resource.data.participants == resource.data.participants
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastMessageAt', 'lastMessageText', 'lastMessageAuthorId'])
+        && request.resource.data.lastMessageAt is int
+        && request.resource.data.lastMessageText is string
+        && request.resource.data.lastMessageText.size() <= 200
+        && request.resource.data.lastMessageAuthorId == request.auth.uid;
+      allow update: if request.auth != null
+        && request.auth.uid in resource.data.participants
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['callStartedAt', 'callStartedBy'])
+        && request.resource.data.callStartedAt is int
+        && request.resource.data.callStartedAt >= 0
+        && request.resource.data.callStartedAt <= request.time.toMillis()
+        && ((request.resource.data.callStartedAt == 0 && request.resource.data.callStartedBy == '')
+            || (request.resource.data.callStartedAt > 0 && request.resource.data.callStartedBy == request.auth.uid));
+      // Leaving a group — removing exactly yourself from participants. Only
+      // valid for groups (originally >2 members); 1:1 DMs stay immutable.
+      allow update: if request.auth != null
+        && resource.data.participants.size() > 2
+        && request.auth.uid in resource.data.participants
+        && request.resource.data.participants.size() == resource.data.participants.size() - 1
+        && !(request.auth.uid in request.resource.data.participants)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participants']);
+      // Group owner changing the group's icon after creation.
+      allow update: if request.auth != null
+        && resource.data.isGroup == true
+        && resource.data.ownerId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['iconUrl'])
+        && request.resource.data.iconUrl is string
+        && request.resource.data.iconUrl.size() <= 1000;
+      // Either side of a 1:1 DM can delete it (e.g. a stale conversation with
+      // a deleted account), or a group's owner can disband it entirely.
+      allow delete: if request.auth != null
+        && request.auth.uid in resource.data.participants
+        && (resource.data.participants.size() == 2
+            || (resource.data.isGroup == true && resource.data.ownerId == request.auth.uid));
 
       match /messages/{messageId} {
         allow read: if isDmParticipant();
@@ -744,7 +1680,10 @@ service cloud.firestore {
         && request.resource.data.downloadUrl is string
         && request.resource.data.downloadUrl.matches('^https://.*')
         && request.resource.data.imageUrl is string
-        && request.resource.data.downloadCount == 0;
+        && request.resource.data.downloadCount == 0
+        && request.resource.data.price is int
+        && request.resource.data.price >= 0
+        && request.resource.data.price <= 100000;
       allow update: if request.auth != null
         && !isBanned()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['downloadCount'])
@@ -761,29 +1700,109 @@ service cloud.firestore {
               && request.resource.data.isDefault == true
               && request.resource.data.name == 'General'
               && request.resource.data.createdBy == 'system')
+            || (channelId == 'staff-meeting'
+                && isStaff()
+                && request.resource.data.isDefault == false
+                && request.resource.data.staffOnly == true
+                && request.resource.data.name == 'Staff Meeting'
+                && request.resource.data.createdBy == request.auth.uid
+                && request.resource.data.createdByName is string
+                && request.resource.data.createdAt is int
+                && request.resource.data.lastActivityAt is int
+                && request.resource.data.lastActivityAt == request.resource.data.createdAt)
+            || (request.resource.data.isDefault == false
+                && channelId != 'staff-meeting'
+                && request.resource.data.createdBy == request.auth.uid
+                && request.resource.data.createdByName is string
+                && request.resource.data.name is string
+                && request.resource.data.name.size() > 0
+                && request.resource.data.name.size() <= 40
+                && (isStaff() || rankTierOf(request.auth.uid) >= 4))
+            // Ranked Bedwars team voice — any of the 8 matched players can
+            // spin these up, bypassing the donor-rank gate above, since the
+            // lobby itself already proved they belong here.
             || (request.resource.data.isDefault == false
                 && request.resource.data.createdBy == request.auth.uid
                 && request.resource.data.createdByName is string
                 && request.resource.data.name is string
                 && request.resource.data.name.size() > 0
                 && request.resource.data.name.size() <= 40
-                && (isStaff() || rankTierOf(request.auth.uid) >= 4)));
-      allow update: if false;
+                && request.resource.data.bedwarsLobbyId is string
+                && request.resource.data.bedwarsTeam in ['a', 'b']
+                && request.auth.uid in get(/databases/$(database)/documents/bedwarsLobbies/$(request.resource.data.bedwarsLobbyId)).data.playerIds)
+            // Ranked Bedwars queue voice — anyone can spin up (or join,
+            // since it's just a shared waiting room) one of these, same
+            // rank-gate bypass as the match channels above.
+            || (request.resource.data.isDefault == false
+                && request.resource.data.createdBy == request.auth.uid
+                && request.resource.data.createdByName is string
+                && request.resource.data.name is string
+                && request.resource.data.name.size() > 0
+                && request.resource.data.name.size() <= 40
+                && channelId.matches('^bw-queue-.*'))
+            // One voice room per Liar's Table. Any seated real player may
+            // create it, avoiding the normal donor-rank channel gate.
+            || (request.resource.data.isDefault == false
+                && request.resource.data.createdBy == request.auth.uid
+                && request.resource.data.createdByName is string
+                && request.resource.data.name is string
+                && request.resource.data.name.size() > 0
+                && request.resource.data.name.size() <= 40
+                && request.resource.data.liarsRoomId is string
+                && channelId == 'liars-' + request.resource.data.liarsRoomId
+                && request.auth.uid in get(/databases/$(database)/documents/liarsRooms/$(request.resource.data.liarsRoomId)).data.playerIds)
+            // One persistent WebRTC room per DM/group conversation.
+            || (request.resource.data.isDefault == false
+                && request.resource.data.createdBy == request.auth.uid
+                && request.resource.data.createdByName is string
+                && request.resource.data.name == 'Direct call'
+                && request.resource.data.dmId is string
+                && channelId == 'dm-' + request.resource.data.dmId
+                && request.auth.uid in get(/databases/$(database)/documents/dms/$(request.resource.data.dmId)).data.participants));
+      allow create: if request.auth != null
+        && !isBanned()
+        && request.resource.data.isDefault == false
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdByName is string
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 40
+        && request.resource.data.communityServerId is string
+        && request.resource.data.communityVoiceId is string
+        && channelId == 'server-' + request.resource.data.communityServerId + '-' + request.resource.data.communityVoiceId
+        && exists(/databases/$(database)/documents/communityChatServers/$(request.resource.data.communityServerId))
+        && (!('bannedUserIds' in get(/databases/$(database)/documents/communityChatServers/$(request.resource.data.communityServerId)).data)
+          || !(request.auth.uid in get(/databases/$(database)/documents/communityChatServers/$(request.resource.data.communityServerId)).data.bannedUserIds));
+      allow update: if isStaff()
+        && channelId == 'staff-meeting'
+        && resource.data.staffOnly == true
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActivityAt'])
+        && request.resource.data.lastActivityAt is int
+        && request.resource.data.lastActivityAt >= resource.data.lastActivityAt
+        && request.resource.data.lastActivityAt <= request.time.toMillis();
       allow delete: if request.auth != null
         && resource.data.isDefault == false
-        && (resource.data.createdBy == request.auth.uid || isStaff());
+        && (resource.data.createdBy == request.auth.uid
+            || isStaff()
+            || (('bedwarsLobbyId' in resource.data)
+                && request.auth.uid in get(/databases/$(database)/documents/bedwarsLobbies/$(resource.data.bedwarsLobbyId)).data.playerIds)
+            || (('liarsRoomId' in resource.data)
+                && request.auth.uid in get(/databases/$(database)/documents/liarsRooms/$(resource.data.liarsRoomId)).data.playerIds));
 
       match /participants/{uid} {
-        allow read: if true;
+        allow read: if canAccessVoiceChannel(channelId);
         allow create, update: if request.auth != null
           && request.auth.uid == uid
           && !isBanned()
+          && canAccessVoiceChannel(channelId)
           && request.resource.data.displayName is string
           && request.resource.data.photoUrl is string
           && request.resource.data.muted is bool
           && request.resource.data.joinedAt is int;
         allow delete: if request.auth != null
           && (request.auth.uid == uid
+              || (isStaff()
+                  && get(/databases/$(database)/documents/voiceChannels/$(channelId)).data.staffOnly == true)
               || (exists(/databases/$(database)/documents/voiceChannels/$(channelId)/participants/$(request.auth.uid))
                   && ('lastSeenAt' in resource.data)
                   && resource.data.lastSeenAt < request.time.toMillis() - 60000));
@@ -791,17 +1810,308 @@ service cloud.firestore {
 
       match /signals/{signalId} {
         allow read: if request.auth != null
-          && (resource.data.toUid == request.auth.uid || resource.data.fromUid == request.auth.uid);
+          && canAccessVoiceChannel(channelId)
+          && (resource.data.toUid == request.auth.uid || resource.data.fromUid == request.auth.uid
+              || (isStaff()
+                  && get(/databases/$(database)/documents/voiceChannels/$(channelId)).data.staffOnly == true));
         allow create: if request.auth != null
           && !isBanned()
+          && canAccessVoiceChannel(channelId)
           && request.resource.data.fromUid == request.auth.uid
           && request.resource.data.toUid is string
           && request.resource.data.type in ['offer', 'answer', 'candidate']
           && request.resource.data.payload is string;
         allow update: if false;
         allow delete: if request.auth != null
-          && (resource.data.toUid == request.auth.uid || resource.data.fromUid == request.auth.uid);
+          && (resource.data.toUid == request.auth.uid || resource.data.fromUid == request.auth.uid
+              || (isStaff()
+                  && get(/databases/$(database)/documents/voiceChannels/$(channelId)).data.staffOnly == true));
       }
+
+      match /messages/{messageId} {
+        allow read: if request.auth != null && canAccessVoiceChannel(channelId);
+        allow create: if request.auth != null
+          && !isBanned()
+          && canAccessVoiceChannel(channelId)
+          && request.resource.data.authorId == request.auth.uid
+          && exists(/databases/$(database)/documents/voiceChannels/$(channelId)/participants/$(request.auth.uid))
+          && request.resource.data.authorName is string
+          && request.resource.data.authorName.size() > 0
+          && request.resource.data.authorName.size() <= 80
+          && request.resource.data.authorPhotoUrl is string
+          && request.resource.data.authorPhotoUrl.size() <= 1000
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 500
+          && request.resource.data.broadcastTts is bool
+          && request.resource.data.createdAt is int
+          && request.resource.data.createdAt <= request.time.toMillis();
+        allow update: if false;
+        allow delete: if request.auth != null
+          && canAccessVoiceChannel(channelId)
+          && (resource.data.authorId == request.auth.uid || isStaff());
+      }
+    }
+
+    match /chessDuels/{duelId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && !isBanned()
+        && request.resource.data.whiteId == request.auth.uid
+        && request.resource.data.whiteName is string
+        && request.resource.data.whitePhotoUrl is string
+        && request.resource.data.blackId == ''
+        && request.resource.data.blackName == ''
+        && request.resource.data.invitedId is string
+        && request.resource.data.fen == 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+        && request.resource.data.moves is list
+        && request.resource.data.moves.size() == 0
+        && request.resource.data.turn == 'w'
+        && request.resource.data.check == false
+        && request.resource.data.status == 'waiting'
+        && request.resource.data.result == ''
+        && request.resource.data.winnerId == ''
+        && request.resource.data.creditBet is int
+        && request.resource.data.creditBet >= 0
+        && request.resource.data.creditBet <= 100
+        && request.resource.data.timeControl in ['blitz_5_3', 'rapid_10']
+        && request.resource.data.initialTimeMs == (request.resource.data.timeControl == 'blitz_5_3' ? 300000 : 600000)
+        && request.resource.data.incrementMs == (request.resource.data.timeControl == 'blitz_5_3' ? 3000 : 0)
+        && request.resource.data.whiteTimeMs == request.resource.data.initialTimeMs
+        && request.resource.data.blackTimeMs == request.resource.data.initialTimeMs
+        && request.resource.data.turnStartedAt == 0
+        && request.resource.data.whitePayoutClaimed == false
+        && request.resource.data.blackPayoutClaimed == false
+        && (request.resource.data.creditBet == 0
+            || getAfter(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance
+                == get(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance
+                  - request.resource.data.creditBet);
+      allow update: if request.auth != null
+        && !isBanned()
+        && (
+          (resource.data.status == 'waiting'
+            && resource.data.whiteId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'endReason', 'finishedAt'])
+            && request.resource.data.status == 'cancelled')
+          || (resource.data.status == 'waiting'
+            && resource.data.whiteId != request.auth.uid
+            && (resource.data.invitedId == '' || resource.data.invitedId == request.auth.uid)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['blackId', 'blackName', 'blackPhotoUrl', 'status', 'startedAt', 'turnStartedAt'])
+            && request.resource.data.blackId == request.auth.uid
+            && request.resource.data.blackName is string
+            && request.resource.data.blackPhotoUrl is string
+            && request.resource.data.status == 'active'
+            && request.resource.data.turnStartedAt is int
+            && request.resource.data.turnStartedAt > 0
+            && request.resource.data.turnStartedAt <= request.time.toMillis()
+            && (resource.data.creditBet == 0
+                || getAfter(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance
+                    == get(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance
+                      - resource.data.creditBet))
+          || (resource.data.status == 'active'
+            && ((resource.data.turn == 'w' && resource.data.whiteId == request.auth.uid)
+                || (resource.data.turn == 'b' && resource.data.blackId == request.auth.uid))
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fen', 'moves', 'turn', 'check', 'status', 'result', 'winnerId', 'winnerName', 'endReason', 'finishedAt', 'whiteTimeMs', 'blackTimeMs', 'turnStartedAt'])
+            && request.resource.data.fen is string
+            && request.resource.data.fen.size() <= 120
+            && request.resource.data.moves.size() == resource.data.moves.size() + 1
+            && request.resource.data.moves.size() <= 400
+            && request.resource.data.moves[request.resource.data.moves.size() - 1].byId == request.auth.uid
+            && request.resource.data.moves[request.resource.data.moves.size() - 1].from.matches('^[a-h][1-8]$')
+            && request.resource.data.moves[request.resource.data.moves.size() - 1].to.matches('^[a-h][1-8]$')
+            && request.resource.data.turn != resource.data.turn
+            && request.resource.data.check is bool
+            && request.resource.data.status in ['active', 'finished']
+            && (!('timeControl' in resource.data)
+                || (request.resource.data.turnStartedAt is int
+                  && request.resource.data.turnStartedAt > resource.data.turnStartedAt
+                  && request.resource.data.turnStartedAt <= request.time.toMillis()
+                  && request.resource.data.whiteTimeMs is int
+                  && request.resource.data.blackTimeMs is int
+                  && request.resource.data.whiteTimeMs >= 0
+                  && request.resource.data.blackTimeMs >= 0
+                  && (resource.data.turn == 'w'
+                    ? request.resource.data.whiteTimeMs <= resource.data.whiteTimeMs + resource.data.incrementMs
+                      && request.resource.data.blackTimeMs == resource.data.blackTimeMs
+                    : request.resource.data.blackTimeMs <= resource.data.blackTimeMs + resource.data.incrementMs
+                      && request.resource.data.whiteTimeMs == resource.data.whiteTimeMs)))
+            && (request.resource.data.status == 'active'
+                && request.resource.data.result == ''
+                && request.resource.data.winnerId == ''
+                && request.resource.data.winnerName == ''
+                && request.resource.data.endReason == ''
+              || request.resource.data.status == 'finished'
+                && ((request.resource.data.result == 'white'
+                      && request.resource.data.winnerId == resource.data.whiteId
+                      && request.resource.data.winnerName == resource.data.whiteName)
+                    || (request.resource.data.result == 'black'
+                      && request.resource.data.winnerId == resource.data.blackId
+                      && request.resource.data.winnerName == resource.data.blackName)
+                    || (request.resource.data.result == 'draw'
+                      && request.resource.data.winnerId == ''
+                      && request.resource.data.winnerName == ''))))
+          || (resource.data.status == 'active'
+            && (resource.data.whiteId == request.auth.uid || resource.data.blackId == request.auth.uid)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'result', 'winnerId', 'winnerName', 'endReason', 'finishedAt'])
+            && request.resource.data.status == 'finished'
+            && ((resource.data.whiteId == request.auth.uid
+                  && request.resource.data.result == 'black'
+                  && request.resource.data.winnerId == resource.data.blackId
+                  && request.resource.data.winnerName == resource.data.blackName)
+                || (resource.data.blackId == request.auth.uid
+                  && request.resource.data.result == 'white'
+                  && request.resource.data.winnerId == resource.data.whiteId
+                  && request.resource.data.winnerName == resource.data.whiteName)))
+          || (resource.data.status == 'active'
+            && (resource.data.whiteId == request.auth.uid || resource.data.blackId == request.auth.uid)
+            && resource.data.moves.size() <= 2
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'result', 'winnerId', 'winnerName', 'endReason', 'finishedAt'])
+            && request.resource.data.status == 'finished'
+            && request.resource.data.result == 'draw'
+            && request.resource.data.winnerId == ''
+            && request.resource.data.winnerName == ''
+            && request.resource.data.endReason == 'Game voided')
+          || (resource.data.status == 'active'
+            && ('timeControl' in resource.data)
+            && resource.data.turnStartedAt > 0
+            && resource.data.turnStartedAt
+                + (resource.data.turn == 'w' ? resource.data.whiteTimeMs : resource.data.blackTimeMs)
+              <= request.time.toMillis()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['whiteTimeMs', 'blackTimeMs', 'status', 'result', 'winnerId', 'winnerName', 'endReason', 'finishedAt'])
+            && request.resource.data.status == 'finished'
+            && request.resource.data.endReason == 'Timeout'
+            && request.resource.data.finishedAt <= request.time.toMillis()
+            && (resource.data.turn == 'w'
+              ? request.resource.data.whiteTimeMs == 0
+                && request.resource.data.blackTimeMs == resource.data.blackTimeMs
+                && request.resource.data.result == 'black'
+                && request.resource.data.winnerId == resource.data.blackId
+                && request.resource.data.winnerName == resource.data.blackName
+              : request.resource.data.blackTimeMs == 0
+                && request.resource.data.whiteTimeMs == resource.data.whiteTimeMs
+                && request.resource.data.result == 'white'
+                && request.resource.data.winnerId == resource.data.whiteId
+                && request.resource.data.winnerName == resource.data.whiteName))
+          || (resource.data.status in ['finished', 'cancelled']
+            && resource.data.whiteId == request.auth.uid
+            && resource.data.whitePayoutClaimed == false
+            && request.resource.data.whitePayoutClaimed == true
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['whitePayoutClaimed']))
+          || (resource.data.status == 'finished'
+            && resource.data.blackId == request.auth.uid
+            && resource.data.blackPayoutClaimed == false
+            && request.resource.data.blackPayoutClaimed == true
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['blackPayoutClaimed']))
+        );
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if request.auth != null;
+        allow create: if request.auth != null
+          && !isBanned()
+          && request.resource.data.authorId == request.auth.uid
+          && request.resource.data.authorName is string
+          && request.resource.data.authorName.size() > 0
+          && request.resource.data.authorName.size() <= 80
+          && request.resource.data.authorPhotoUrl is string
+          && request.resource.data.authorPhotoUrl.size() <= 1000
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 300
+          && request.resource.data.createdAt is int;
+        allow update: if false;
+        allow delete: if request.auth != null
+          && (resource.data.authorId == request.auth.uid || isStaff());
+      }
+
+      match /spectators/{userId} {
+        allow read: if request.auth != null;
+        allow create, update: if request.auth != null
+          && request.auth.uid == userId
+          && request.resource.data.displayName is string
+          && request.resource.data.photoUrl is string
+          && request.resource.data.lastSeenAt is int
+          && request.resource.data.lastSeenAt <= request.time.toMillis();
+        allow delete: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+
+    match /propertyGames/{gameId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && !isBanned()
+        && request.resource.data.hostId == request.auth.uid
+        && request.resource.data.hostName is string
+        && request.resource.data.hostName.size() > 0
+        && request.resource.data.hostName.size() <= 80
+        && request.resource.data.maxPlayers is int
+        && request.resource.data.maxPlayers >= 2
+        && request.resource.data.maxPlayers <= 6
+        && request.resource.data.startingCash is int
+        && request.resource.data.startingCash >= 500
+        && request.resource.data.startingCash <= 5000
+        && request.resource.data.playerIds is list
+        && request.resource.data.playerIds.size() == 1
+        && request.resource.data.playerIds[0] == request.auth.uid
+        && request.resource.data.players is list
+        && request.resource.data.players.size() == 1
+        && request.resource.data.players[0].id == request.auth.uid
+        && request.resource.data.players[0].cash == request.resource.data.startingCash
+        && request.resource.data.players[0].properties.size() == 0
+        && request.resource.data.status == 'waiting'
+        && request.resource.data.currentPlayerIndex == 0
+        && request.resource.data.phase == 'roll'
+        && request.resource.data.pendingPropertyId == ''
+        && request.resource.data.log.size() <= 60
+        && request.resource.data.createdAt is int
+        && request.resource.data.createdAt <= request.time.toMillis();
+      allow update: if request.auth != null
+        && !isBanned()
+        && request.resource.data.hostId == resource.data.hostId
+        && request.resource.data.maxPlayers == resource.data.maxPlayers
+        && request.resource.data.startingCash == resource.data.startingCash
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.players.size() <= resource.data.maxPlayers
+        && request.resource.data.playerIds.size() == request.resource.data.players.size()
+        && request.resource.data.log.size() <= 60
+        && (
+          (resource.data.status == 'waiting'
+            && resource.data.hostId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'startedAt', 'finishedAt', 'currentPlayerIndex', 'phase', 'log'])
+            && request.resource.data.status in ['active', 'cancelled']
+            && (request.resource.data.status == 'cancelled'
+              || resource.data.players.size() >= 2))
+          || (resource.data.status == 'waiting'
+            && !(request.auth.uid in resource.data.playerIds)
+            && request.auth.uid in request.resource.data.playerIds
+            && request.resource.data.playerIds.size() == resource.data.playerIds.size() + 1
+            && request.resource.data.players.size() == resource.data.players.size() + 1
+            && request.resource.data.players[request.resource.data.players.size() - 1].id == request.auth.uid
+            && request.resource.data.players[request.resource.data.players.size() - 1].cash == resource.data.startingCash
+            && request.resource.data.players[request.resource.data.players.size() - 1].properties.size() == 0
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['players', 'playerIds', 'log']))
+          || (resource.data.status == 'waiting'
+            && resource.data.hostId != request.auth.uid
+            && request.auth.uid in resource.data.playerIds
+            && !(request.auth.uid in request.resource.data.playerIds)
+            && request.resource.data.playerIds.size() == resource.data.playerIds.size() - 1
+            && request.resource.data.players.size() == resource.data.players.size() - 1
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['players', 'playerIds', 'log']))
+          || (resource.data.status == 'active'
+            && request.auth.uid in resource.data.playerIds
+            && resource.data.players[resource.data.currentPlayerIndex].id == request.auth.uid
+            && request.resource.data.status in ['active', 'finished']
+            && request.resource.data.phase in ['roll', 'buy', 'end']
+            && request.resource.data.currentPlayerIndex >= 0
+            && request.resource.data.currentPlayerIndex < request.resource.data.players.size()
+            && request.resource.data.lastDice.size() <= 2
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['players', 'status', 'currentPlayerIndex', 'phase', 'pendingPropertyId', 'lastDice', 'lastCardTitle', 'lastCardText', 'winnerId', 'winnerName', 'deckIndex', 'turnNumber', 'log', 'finishedAt'])
+            && (request.resource.data.status == 'active'
+              || (request.resource.data.winnerId in resource.data.playerIds
+                && request.resource.data.winnerName is string
+                && request.resource.data.finishedAt is int)))
+        );
+      allow delete: if false;
     }
 
     match /wordleDuels/{duelId} {
@@ -815,10 +2125,19 @@ service cloud.firestore {
         && request.resource.data.invitedId is string
         && request.resource.data.answer is string
         && request.resource.data.answer.matches('^[A-Z]{5}$')
+        && request.resource.data.bet is int
+        && request.resource.data.bet >= 0
+        && request.resource.data.bet <= 100
         && request.resource.data.hostGuesses.size() == 0
         && request.resource.data.guestGuesses.size() == 0
         && request.resource.data.status == 'waiting'
-        && request.resource.data.winnerId == '';
+        && request.resource.data.winnerId == ''
+        && request.resource.data.hostPayoutClaimed == false
+        && request.resource.data.guestPayoutClaimed == false
+        && (request.resource.data.bet == 0
+            || getAfter(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance
+              == get(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance
+                - request.resource.data.bet);
       allow update: if request.auth != null
         && !isBanned()
         && (
@@ -833,19 +2152,49 @@ service cloud.firestore {
             && request.resource.data.guestId == request.auth.uid
             && request.resource.data.guestName is string
             && request.resource.data.guestPhotoUrl is string
-            && request.resource.data.status == 'active')
+            && request.resource.data.status == 'active'
+            && (resource.data.bet == 0
+                || getAfter(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance
+                  == get(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance
+                    - resource.data.bet))
           || (resource.data.status == 'active'
             && resource.data.hostId == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hostGuesses', 'status', 'winnerId', 'winnerName', 'finishedAt'])
             && request.resource.data.hostGuesses.size() == resource.data.hostGuesses.size() + 1
             && request.resource.data.hostGuesses.size() <= 6
-            && request.resource.data.status in ['active', 'finished'])
+            && request.resource.data.status in ['active', 'finished']
+            && (request.resource.data.status == 'active'
+                || (request.resource.data.winnerId == request.auth.uid
+                    && request.resource.data.winnerName == resource.data.hostName
+                    && request.resource.data.hostGuesses[request.resource.data.hostGuesses.size() - 1].word == resource.data.answer)
+                || (request.resource.data.winnerId == ''
+                    && request.resource.data.winnerName == ''
+                    && request.resource.data.hostGuesses.size() == 6
+                    && resource.data.guestGuesses.size() == 6)))
           || (resource.data.status == 'active'
             && resource.data.guestId == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['guestGuesses', 'status', 'winnerId', 'winnerName', 'finishedAt'])
             && request.resource.data.guestGuesses.size() == resource.data.guestGuesses.size() + 1
             && request.resource.data.guestGuesses.size() <= 6
-            && request.resource.data.status in ['active', 'finished'])
+            && request.resource.data.status in ['active', 'finished']
+            && (request.resource.data.status == 'active'
+                || (request.resource.data.winnerId == request.auth.uid
+                    && request.resource.data.winnerName == resource.data.guestName
+                    && request.resource.data.guestGuesses[request.resource.data.guestGuesses.size() - 1].word == resource.data.answer)
+                || (request.resource.data.winnerId == ''
+                    && request.resource.data.winnerName == ''
+                    && request.resource.data.guestGuesses.size() == 6
+                    && resource.data.hostGuesses.size() == 6)))
+          || (resource.data.status in ['finished', 'cancelled']
+            && resource.data.hostId == request.auth.uid
+            && resource.data.hostPayoutClaimed == false
+            && request.resource.data.hostPayoutClaimed == true
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hostPayoutClaimed']))
+          || (resource.data.status == 'finished'
+            && resource.data.guestId == request.auth.uid
+            && resource.data.guestPayoutClaimed == false
+            && request.resource.data.guestPayoutClaimed == true
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['guestPayoutClaimed']))
         );
       allow delete: if false;
 
@@ -892,6 +2241,132 @@ service cloud.firestore {
             && request.resource.data.challengerHandled == true)
         );
       allow delete: if false;
+    }
+
+    match /bedwarsQueue/{uid} {
+      allow read: if true;
+      allow create: if request.auth != null
+        && !isBanned()
+        && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.displayName is string
+        && request.resource.data.elo is int
+        && request.resource.data.partyId is string
+        && request.resource.data.lobbyCode is string
+        && request.resource.data.lobbyCode.size() <= 12
+        && request.resource.data.mode in ['bedfight', '1v1', '3v3', '4v4']
+        && request.resource.data.queuedAt is int;
+      // Anyone signed in may pop a queue entry — either the player leaving
+      // on their own, or a client's matchmaker consuming it into a lobby.
+      // Ephemeral matchmaking metadata, low stakes if griefed (same trust
+      // level as this app's other realtime presence data).
+      allow delete: if request.auth != null;
+      allow update: if false;
+    }
+
+    match /bedwarsLobbies/{lobbyId} {
+      allow read: if true;
+      allow create: if request.auth != null
+        && !isBanned()
+        && request.auth.uid in request.resource.data.playerIds
+        && request.resource.data.playerIds is list
+        && (((request.resource.data.mode in ['bedfight', '1v1']) && request.resource.data.playerIds.size() == 2)
+            || (request.resource.data.mode == '3v3' && request.resource.data.playerIds.size() == 6)
+            || (request.resource.data.mode == '4v4' && request.resource.data.playerIds.size() == 8))
+        && request.resource.data.players is list
+        && request.resource.data.players.size() == request.resource.data.playerIds.size()
+        && ((request.resource.data.mode == 'bedfight' && request.resource.data.status == 'role_select')
+            || (request.resource.data.mode != 'bedfight' && request.resource.data.status == 'voting'))
+        && request.resource.data.mapOptions is list
+        && ((request.resource.data.mode == 'bedfight'
+              && request.resource.data.mapOptions == ['EduShare Dojo']
+              && request.resource.data.chosenMap == 'EduShare Dojo')
+            || (request.resource.data.mode != 'bedfight'
+              && request.resource.data.mapOptions.size() == 3
+              && request.resource.data.chosenMap == ''))
+        && request.resource.data.mapVotes == {}
+        && request.resource.data.roles == {}
+        && request.resource.data.voiceChannelAId == ''
+        && request.resource.data.voiceChannelBId == ''
+        && request.resource.data.screenshotUrl == ''
+        && request.resource.data.winningTeamClaim == ''
+        && request.resource.data.topKillerId == ''
+        && request.resource.data.submittedBy == ''
+        && request.resource.data.reviewedBy == ''
+        && request.resource.data.createdAt is int;
+      allow update: if request.auth != null && !isBanned()
+        && (
+          (resource.data.status == 'voting' && request.auth.uid in resource.data.playerIds
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['mapVotes'])
+            && request.resource.data.mapVotes[request.auth.uid] in resource.data.mapOptions)
+          || (resource.data.status in ['voting', 'role_select'] && request.auth.uid in resource.data.playerIds
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['voiceChannelAId', 'voiceChannelBId'])
+            && resource.data.voiceChannelAId == ''
+            && request.resource.data.voiceChannelAId is string && request.resource.data.voiceChannelAId != ''
+            && request.resource.data.voiceChannelBId is string && request.resource.data.voiceChannelBId != '')
+          || (resource.data.status == 'voting' && request.auth.uid in resource.data.playerIds
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'chosenMap'])
+            && request.resource.data.status == 'role_select'
+            && request.resource.data.chosenMap in resource.data.mapOptions)
+          || (resource.data.status == 'role_select' && request.auth.uid in resource.data.playerIds
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['roles'])
+            && request.resource.data.roles[request.auth.uid] is string)
+          || (resource.data.status == 'role_select' && request.auth.uid in resource.data.playerIds
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+            && request.resource.data.status == 'in_progress')
+          || (resource.data.status == 'in_progress' && request.auth.uid in resource.data.playerIds
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['status', 'screenshotUrl', 'winningTeamClaim', 'topKillerId', 'submittedBy'])
+            && request.resource.data.status == 'awaiting_review'
+            && request.resource.data.screenshotUrl.matches('^https://.*')
+            && request.resource.data.winningTeamClaim in ['a', 'b']
+            && request.resource.data.submittedBy == request.auth.uid)
+          || (isStaff() && resource.data.status == 'awaiting_review'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'reviewedBy', 'reviewedAt'])
+            && request.resource.data.status in ['scored', 'rejected']
+            && request.resource.data.reviewedBy == request.auth.uid)
+          || (resource.data.status in ['voting', 'role_select', 'in_progress'] && request.auth.uid in resource.data.playerIds
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+            && request.resource.data.status == 'cancelled')
+        );
+      allow delete: if false;
+    }
+
+    // Liar's Table live rooms. The game state is intentionally low-stakes and
+    // participant-authored, like the other Fun rooms; credits are never touched.
+    match /liarsRooms/{roomId} {
+      allow read: if request.auth != null && !isBanned();
+      allow create: if request.auth != null
+        && !isBanned()
+        && request.resource.data.hostId == request.auth.uid
+        && request.resource.data.playerIds == [request.auth.uid]
+        && request.resource.data.players is list
+        && request.resource.data.players.size() == 1
+        && request.resource.data.status == 'waiting'
+        && request.resource.data.round == 0
+        && request.resource.data.createdAt is int
+        && request.resource.data.updatedAt is int;
+      allow update: if request.auth != null
+        && !isBanned()
+        && request.resource.data.playerIds is list
+        && request.resource.data.playerIds.size() <= 4
+        && request.resource.data.players is list
+        && request.resource.data.players.size() <= 4
+        && request.resource.data.updatedAt is int
+        && request.resource.data.updatedAt >= resource.data.updatedAt
+        && (
+          // Existing participants may advance their shared table. The client
+          // transaction still verifies turn ownership before every action.
+          request.auth.uid in resource.data.playerIds
+          // A signed-in player may add only themself to an open seat.
+          || (resource.data.status == 'waiting'
+            && request.resource.data.status == 'waiting'
+            && !(request.auth.uid in resource.data.playerIds)
+            && request.auth.uid in request.resource.data.playerIds
+            && request.resource.data.playerIds.size() == resource.data.playerIds.size() + 1
+            && request.resource.data.playerIds.hasAll(resource.data.playerIds))
+        );
+      allow delete: if request.auth != null && (resource.data.hostId == request.auth.uid || isStaff());
     }
 
     match /users/{userId}/favorites/{serverId} {

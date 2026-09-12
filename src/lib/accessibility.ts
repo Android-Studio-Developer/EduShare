@@ -8,6 +8,13 @@ export function isReduceMotion() {
   return localStorage.getItem(MOTION_KEY) === "1";
 }
 
+export function isLowPowerDevice() {
+  const nav = navigator as Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
+  return (typeof nav.deviceMemory === "number" && nav.deviceMemory <= 4)
+    || (typeof nav.hardwareConcurrency === "number" && nav.hardwareConcurrency <= 4)
+    || nav.connection?.saveData === true;
+}
+
 export function getTextSize(): TextSize {
   return localStorage.getItem(TEXT_KEY) === "large" ? "large" : "normal";
 }

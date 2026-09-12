@@ -2,7 +2,20 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 
 const KEY = "edushare-music-playing";
 const VOLUME_KEY = "edushare-music-volume";
+const TRACK_KEY = "edushare-music-track";
 const DEFAULT_VOLUME = 0.35;
+
+export type MusicTrack = "lofi" | "peak" | "peak2";
+
+export const MUSIC_TRACKS: Record<MusicTrack, { src: string; label: string }> = {
+  lofi: { src: "/lofi.mp3", label: "Lofi" },
+  peak: { src: "/playlist.mp3", label: "Peak" },
+  peak2: { src: "/playlist2.mp3", label: "Peak 2" },
+};
+
+function isMusicTrack(v: string | null): v is MusicTrack {
+  return v === "lofi" || v === "peak" || v === "peak2";
+}
 
 interface MusicContextValue {
   playing: boolean;
@@ -12,6 +25,8 @@ interface MusicContextValue {
   currentTime: number;
   duration: number;
   seek: (time: number) => void;
+  track: MusicTrack;
+  setTrack: (track: MusicTrack) => void;
 }
 
 const MusicContext = createContext<MusicContextValue | null>(null);
@@ -33,15 +48,21 @@ export function formatMusicTime(seconds: number): string {
 export function MusicProvider({ children }: { children: ReactNode }) {
   const [playing, setPlaying] = useState(false);
   const [volume, setVolumeState] = useState(() => {
-    const stored = Number(localStorage.getItem(VOLUME_KEY));
-    return stored > 0 && stored <= 1 ? stored : DEFAULT_VOLUME;
+    const raw = localStorage.getItem(VOLUME_KEY);
+    const stored = Number(raw);
+    return raw !== null && stored >= 0 && stored <= 1 ? stored : DEFAULT_VOLUME;
   });
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [track, setTrackState] = useState<MusicTrack>(() => {
+    const raw = localStorage.getItem(TRACK_KEY);
+    return isMusicTrack(raw) ? raw : "peak";
+  });
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
-    const audio = new Audio("/playlist.mp3");
+    const audio = new Audio();
+    audio.preload = "none";
     audio.loop = true;
     audio.volume = volume;
     audioRef.current = audio;
@@ -70,7 +91,10 @@ export function MusicProvider({ children }: { children: ReactNode }) {
   function toggle() {
     setPlaying((prev) => {
       const next = !prev;
-      if (next) void audioRef.current?.play().catch(() => {});
+      if (next && audioRef.current) {
+        if (!audioRef.current.getAttribute("src")) audioRef.current.src = MUSIC_TRACKS[track].src;
+        void audioRef.current.play().catch(() => {});
+      }
       else audioRef.current?.pause();
       localStorage.setItem(KEY, next ? "1" : "0");
       return next;
@@ -90,8 +114,22 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     setCurrentTime(time);
   }
 
+  function setTrack(next: MusicTrack) {
+    setTrackState(next);
+    localStorage.setItem(TRACK_KEY, next);
+    const audio = audioRef.current;
+    if (!audio) return;
+    const wasPlaying = !audio.paused;
+    if (!audio.getAttribute("src") && !wasPlaying) return;
+    audio.src = MUSIC_TRACKS[next].src;
+    audio.currentTime = 0;
+    setCurrentTime(0);
+    setDuration(0);
+    if (wasPlaying) void audio.play().catch(() => {});
+  }
+
   return (
-    <MusicContext.Provider value={{ playing, toggle, volume, setVolume, currentTime, duration, seek }}>
+    <MusicContext.Provider value={{ playing, toggle, volume, setVolume, currentTime, duration, seek, track, setTrack }}>
       {children}
     </MusicContext.Provider>
   );

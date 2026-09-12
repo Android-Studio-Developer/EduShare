@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Bell, Blocks, BookOpen, Castle, ChevronDown, Crown, Heart, LayoutDashboard, LogOut, MessageCircle, Music, Music2, PartyPopper, Plus, Shield, Sparkles, UserCircle, UserPlus, Users, Volume2 } from "lucide-react";
+import { Bell, Blocks, BookOpen, Bot, Castle, ChevronDown, Crown, Heart, LayoutDashboard, LogOut, MessageCircle, Music, Music2, PartyPopper, Plus, Server, Shield, Sparkles, UserCircle, UserPlus, Users, Volume2 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { formatMusicTime, useMusic } from "../context/MusicContext";
+import { formatMusicTime, MUSIC_TRACKS, useMusic } from "../context/MusicContext";
+import { isStaffRole } from "../lib/moderation";
 import Button from "./Button";
 import eduShareMark from "../assets/edushare-mark.svg";
 
@@ -21,7 +22,7 @@ function moreLinkClass({ isActive }: { isActive: boolean }) {
 
 export default function Navbar() {
   const { user, role, logOut } = useAuth();
-  const { playing: musicPlaying, toggle: toggleMusic, volume, setVolume, currentTime, duration, seek } = useMusic();
+  const { playing: musicPlaying, toggle: toggleMusic, volume, setVolume, currentTime, duration, seek, track, setTrack } = useMusic();
   const navigate = useNavigate();
   const [moreOpen, setMoreOpen] = useState(false);
   const [musicOpen, setMusicOpen] = useState(false);
@@ -78,8 +79,14 @@ export default function Navbar() {
                 <NavLink to="/dashboard" className={moreLinkClass} onClick={() => setMoreOpen(false)}>
                   <LayoutDashboard size={14} /> Dashboard
                 </NavLink>
+                <NavLink to="/chat-servers" className={moreLinkClass} onClick={() => setMoreOpen(false)}>
+                  <Server size={14} /> Servers
+                </NavLink>
+                <NavLink to="/develop" className={moreLinkClass} onClick={() => setMoreOpen(false)}>
+                  <Bot size={14} /> Developer Portal
+                </NavLink>
                 <NavLink to="/moderation" className={moreLinkClass} onClick={() => setMoreOpen(false)}>
-                  <Shield size={14} /> {role === "owner" ? "Owner" : role === "moderator" ? "Moderate" : "Apply for Mod"}
+                  <Shield size={14} /> {role === "owner" ? "Owner" : role === "moderator" || role === "actor" || role === "headmod" ? "Moderate" : "Apply for Mod"}
                 </NavLink>
                 <NavLink to="/favorites" className={moreLinkClass} onClick={() => setMoreOpen(false)}>
                   <Heart size={14} /> Favorites
@@ -134,6 +141,20 @@ export default function Navbar() {
                     {formatMusicTime(currentTime)} / {formatMusicTime(duration)}
                   </span>
                 </div>
+                <div className="mt-2 flex gap-1 rounded-lg border border-white/10 bg-black/20 p-0.5">
+                  {(Object.entries(MUSIC_TRACKS) as [keyof typeof MUSIC_TRACKS, (typeof MUSIC_TRACKS)[keyof typeof MUSIC_TRACKS]][]).map(([id, def]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setTrack(id)}
+                      className={`cursor-target flex-1 rounded-md py-1 font-mono text-[11px] font-semibold transition-colors ${
+                        track === id ? "bg-brand-500/25 text-brand-300" : "text-white/45 hover:text-white"
+                      }`}
+                    >
+                      {def.label}
+                    </button>
+                  ))}
+                </div>
                 <input
                   type="range"
                   min={0}
@@ -170,7 +191,7 @@ export default function Navbar() {
               >
                 <Plus size={15} /> Register Server
               </Button>
-              {(role === "owner" || role === "moderator") && (
+              {isStaffRole(role) && (
                 <Button variant="ghost" size="sm" onClick={() => navigate("/moderation")} aria-label="Moderation">
                   <Shield size={16} />
                 </Button>

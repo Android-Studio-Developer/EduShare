@@ -12,10 +12,17 @@ dist
 dist-ssr
 *.local
 .env
+.codex/
 
-# Source music file (156MB, exceeds GitHub's 100MB limit) — the compressed,
-# actually-served copy lives in public/playlist.mp3, which IS tracked.
-플리.mp3
+# Huge local media drops. Use external storage/Git LFS if these need versioning.
+public/Chloe.A Film.mp4
+public/playlist2.mp3
+
+# Source music files — the actually-served copies live in public/*.mp3,
+# which ARE tracked. Root copies are just the originals dropped in by hand.
+/플리.mp3
+/Lukrembo2019.mp3
+/playlist2.mp3
 
 # Editor directories and files
 .vscode/*

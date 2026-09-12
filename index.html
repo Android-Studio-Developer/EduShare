@@ -4,11 +4,12 @@
     <meta charset="UTF-8" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=Plus+Jakarta+Sans:ital,wght@0,400..800;1,400..800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=Plus+Jakarta+Sans:ital,wght@0,400..800;1,400..800&family=Poppins:wght@500;700&family=Playfair+Display:wght@600;700&family=Comic+Neue:wght@700&family=Caveat:wght@600;700&family=Bungee&family=Press+Start+2P&display=swap" rel="stylesheet" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Google Classroom" />
-    <title>Google Classroom</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <meta name="description" content="Home" />
+    <title>Home - Classroom</title>
+    <!-- Relative URL lets Vite fingerprint the project-root favicon on every build. -->
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <script>
       try {
         var v = localStorage.getItem("edushare-ui-version");
@@ -16,6 +17,8 @@
         if (localStorage.getItem("edushare-reduce-motion") === "1") document.documentElement.setAttribute("data-reduce-motion", "1");
         if (localStorage.getItem("edushare-text-size") === "large") document.documentElement.setAttribute("data-text-size", "large");
         if (localStorage.getItem("edushare-high-contrast") === "1") document.documentElement.setAttribute("data-high-contrast", "1");
+        // Skip the hold-to-unlock site gate so the redesigned Home is reachable in one click.
+        sessionStorage.setItem("edushare-gate-unlocked", "1");
       } catch (e) {}
     </script>
   </head>

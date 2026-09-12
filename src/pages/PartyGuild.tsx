@@ -2,17 +2,20 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Castle, Check, Crown, LogOut, Pencil, Plus, Star, Trash2, Users } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { clearPartyPointer, createParty, disbandParty, joinParty, leaveParty, PARTY_MAX_MEMBERS, renameParty, setPartyCoLeader, subscribeToParties, subscribeToParty } from "../lib/parties";
-import { clearGuildPointer, createGuild, disbandGuild, GUILD_MAX_MEMBERS, joinGuild, leaveGuild, renameGuild, setGuildCoOwner, styleGuildName, subscribeToGuild, subscribeToGuilds } from "../lib/guilds";
+import { clearGuildPointer, createGuild, disbandGuild, GUILD_MAX_MEMBERS, joinGuild, leaveGuild, renameGuild, setGuildCoOwner, setGuildTag, styleGuildName, subscribeToGuild, subscribeToGuilds } from "../lib/guilds";
 import { subscribeToAllProfiles, subscribeToProfile } from "../lib/profiles";
 import { canUseBannerEffects } from "../lib/ranks";
 import type { Guild, GroupNameEffect, Party, UserProfile } from "../types";
 import Button from "../components/Button";
+import GuildTag, { GUILD_TAG_FONTS, GUILD_TAG_ICONS, PixelGuildIcon } from "../components/GuildTag";
+import type { GuildTagFont, GuildTagIcon } from "../types";
 
 function nameOf(profiles: Map<string, UserProfile>, id: string) {
   return profiles.get(id)?.displayName ?? "Unknown";
 }
 
 const GUILD_NAME_COLORS = ["#8FACFF", "#F87171", "#FBBF24", "#4ADE80", "#F472B6", "#38BDF8"];
+const GUILD_TAG_COLORS = ["#fb7185","#fb923c","#facc15","#86efac","#7dd3fc","#a78bfa","#c084fc","#f0abfc","#fda4af","#d6b98c","#bef264","#f9a8d4","#d1d5db"];
 
 export default function PartyGuild() {
   const { user, role } = useAuth();
@@ -28,6 +31,11 @@ export default function PartyGuild() {
   const [busy, setBusy] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
+  const [tagDraft, setTagDraft] = useState("");
+  const [tagIconDraft, setTagIconDraft] = useState<GuildTagIcon>("leaf");
+  const [tagFontDraft, setTagFontDraft] = useState<GuildTagFont>("mono");
+  const [tagImageDraft, setTagImageDraft] = useState("");
+  const [tagColorDraft, setTagColorDraft] = useState("#86efac");
 
   useEffect(() => subscribeToAllProfiles(setProfiles), []);
   useEffect(() => {
@@ -36,6 +44,14 @@ export default function PartyGuild() {
   }, [user]);
   useEffect(() => subscribeToParties(setParties), []);
   useEffect(() => subscribeToGuilds(setGuilds), []);
+
+  useEffect(() => {
+    setTagDraft(myGuild?.tag ?? "");
+    setTagIconDraft(GUILD_TAG_ICONS.some(option=>option.id===myGuild?.tagIcon)?myGuild!.tagIcon!:"leaf");
+    setTagFontDraft(myGuild?.tagFont ?? "mono");
+    setTagImageDraft(myGuild?.tagImageUrl ?? "");
+    setTagColorDraft(myGuild?.tagColor ?? "#86efac");
+  }, [myGuild?.id, myGuild?.tag, myGuild?.tagIcon, myGuild?.tagFont, myGuild?.tagImageUrl, myGuild?.tagColor]);
 
   const profileById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
 
@@ -186,6 +202,7 @@ export default function PartyGuild() {
                 style={{ ...(myGuild.nameEffect === "none" && myGuild.nameColor ? { color: myGuild.nameColor } : {}), ...(myGuild.nameGlow ? { "--glow-color": myGuild.nameColor || "#8FACFF" } as CSSProperties : {}) }}
               >
                 <span className="truncate">{myGuild.name}</span>
+                <GuildTag tag={myGuild.tag} icon={myGuild.tagIcon} font={myGuild.tagFont} imageUrl={myGuild.tagImageUrl} color={myGuild.tagColor}/>
                 {(user.uid === myGuild.ownerId || user.uid === myGuild.coOwnerId) && (
                   <button type="button" onClick={() => { setNameDraft(myGuild.name); setEditingName(true); }} className="cursor-target shrink-0 rounded-lg p-1 text-white/30 hover:bg-white/10 hover:text-white"><Pencil size={13} /></button>
                 )}
@@ -213,6 +230,36 @@ export default function PartyGuild() {
               </li>
             ))}
           </ul>
+
+          {(user.uid === myGuild.ownerId || user.uid === myGuild.coOwnerId) && (
+            <div className="mt-5 rounded-xl border border-border bg-surface-2/60 p-4">
+              <p className="text-xs font-semibold text-white/50">Guild tag</p>
+              <p className="mt-1 text-[11px] text-white/30">Shown as a visible nameplate beside every member's name. Use up to 5 letters or numbers.</p>
+              <p className="mt-5 font-mono text-sm font-bold text-white">Choose badge</p>
+              <div className="mt-3 grid grid-cols-5 gap-2" aria-label="Guild tag icon">
+                {GUILD_TAG_ICONS.map(({ id, label }) => (
+                  <button key={id} type="button" title={label} aria-label={label} onClick={() => {setTagIconDraft(id);setTagImageDraft("");}} className={`cursor-target grid aspect-square min-h-14 place-items-center rounded-xl border bg-[#17171b] transition hover:-translate-y-0.5 ${tagIconDraft === id&&!tagImageDraft ? "border-brand-300 ring-2 ring-brand-400/25" : "border-white/10"}`} style={{color:tagColorDraft}}>
+                    <PixelGuildIcon id={id} size={30}/>
+                  </button>
+                ))}
+              </div>
+              <p className="mt-5 font-mono text-sm font-bold text-white">Choose color</p>
+              <div className="mt-3 grid grid-cols-5 gap-2 sm:grid-cols-7">{GUILD_TAG_COLORS.map(color=><button key={color} type="button" title={color} onClick={()=>setTagColorDraft(color)} className={`cursor-target grid aspect-square min-h-11 place-items-center rounded-xl border bg-[#17171b] ${tagColorDraft===color?"border-brand-300 ring-2 ring-brand-400/25":"border-white/10"}`} style={{color}}><PixelGuildIcon id={tagIconDraft} size={25}/></button>)}</div>
+              <label className="mt-3 block"><span className="text-[11px] font-semibold text-white/45">Custom badge image</span><input value={tagImageDraft} onChange={(event)=>setTagImageDraft(event.target.value.slice(0,1000))} placeholder="https://… or embed:https://…" className="mt-1.5 w-full rounded-xl border border-border bg-surface px-3 py-2 text-xs text-white placeholder:text-white/20 focus:border-brand-500/50 focus:outline-none"/><span className="mt-1 block text-[10px] text-white/25">Embedded from a direct http(s) image URL. Clear it to use a built-in icon.</span></label>
+              <div className="mt-3 flex flex-wrap gap-2" aria-label="Guild tag font">
+                {GUILD_TAG_FONTS.map(({ id, label, family }) => (
+                  <button key={id} type="button" onClick={() => setTagFontDraft(id)} className={`cursor-target rounded-lg border px-2.5 py-1.5 text-xs transition ${tagFontDraft === id ? "border-brand-300 bg-brand-500/20 text-white" : "border-border bg-surface text-white/45 hover:border-white/25 hover:text-white"}`} style={{ fontFamily: family }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-4 rounded-xl border border-white/10 bg-black/30 p-4"><p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-white/25">Live preview</p><GuildTag tag={tagDraft || "PXN"} icon={tagIconDraft} font={tagFontDraft} imageUrl={tagImageDraft.trim().replace(/^embed:/i,"")} color={tagColorDraft}/></div>
+              <form onSubmit={(event) => { event.preventDefault(); void run(() => setGuildTag(myGuild.id, tagDraft, tagIconDraft, tagFontDraft, tagImageDraft, tagColorDraft)); }} className="mt-3 flex gap-2">
+                <input value={tagDraft} onChange={(event) => setTagDraft(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5))} maxLength={5} placeholder="PXN" className="min-w-0 flex-1 rounded-xl border border-border bg-surface px-3 py-2 font-mono text-sm uppercase tracking-widest text-white placeholder:text-white/20 focus:border-brand-500/50 focus:outline-none" />
+                <Button type="submit" size="sm" disabled={busy}>Save tag</Button>
+              </form>
+            </div>
+          )}
 
           {(user.uid === myGuild.ownerId || user.uid === myGuild.coOwnerId) && (
             canUseBannerEffects(myProfile?.rank) ? (
@@ -253,6 +300,22 @@ export default function PartyGuild() {
             {user.uid === myGuild.ownerId ? <Trash2 size={14} /> : <LogOut size={14} />}
             {user.uid === myGuild.ownerId ? "Disband guild" : "Leave guild"}
           </Button>
+
+          {guilds.filter((g) => g.id !== myGuild.id).length > 0 && (
+            <div className="mt-8">
+              <p className="font-mono text-sm font-semibold text-white/60">Other Guilds</p>
+              <div className="mt-3 space-y-2">
+                {guilds.filter((g) => g.id !== myGuild.id).map((g) => (
+                  <div key={g.id} className="flex items-center justify-between rounded-xl border border-border bg-surface p-4">
+                    <div>
+                      <p className="flex items-center gap-2 font-mono font-semibold text-white">{g.name}{g.tag && <span className="rounded-md border border-white/10 bg-white/5 px-1.5 py-0.5 text-[9px] text-white/55">{g.tag}</span>}</p>
+                      <p className="text-xs text-white/40">Owned by {g.ownerName} · {g.memberIds.length}/{GUILD_MAX_MEMBERS}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <>
@@ -270,7 +333,7 @@ export default function PartyGuild() {
               openGuilds.map((g) => (
                 <div key={g.id} className="flex items-center justify-between rounded-xl border border-border bg-surface p-4">
                   <div>
-                    <p className="font-mono font-semibold text-white">{g.name}</p>
+                    <p className="flex items-center gap-2 font-mono font-semibold text-white">{g.name}{g.tag && <span className="rounded-md border border-white/10 bg-white/5 px-1.5 py-0.5 text-[9px] text-white/55">{g.tag}</span>}</p>
                     <p className="text-xs text-white/40">Owned by {g.ownerName} · {g.memberIds.length}/{GUILD_MAX_MEMBERS}</p>
                   </div>
                   <Button size="sm" disabled={busy} onClick={() => run(() => joinGuild(g.id, user.uid))}>Join</Button>

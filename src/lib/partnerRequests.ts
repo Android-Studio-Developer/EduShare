@@ -1,15 +1,27 @@
-import { addDoc, collection, doc, onSnapshot, orderBy, query, updateDoc, where } from "firebase/firestore";
+import { addDoc, collection, doc, getDoc, getDocs, onSnapshot, orderBy, query, updateDoc, where, writeBatch } from "firebase/firestore";
 import { db } from "./firebase";
-import { grantRank } from "./ranks";
 import type { PartnerRequest } from "../types";
 
-export function submitPartnerRequest(userId: string, serverId: string, serverName: string, message: string, contact: string) {
+export async function submitPartnerRequest(userId: string, serverId: string, serverName: string, message: string, contact: string) {
   const trimmedMessage = message.trim().slice(0, 500);
   if (!trimmedMessage) throw new Error("Tell us a bit about your server.");
+
+  const [serverSnapshot, myRequests] = await Promise.all([
+    getDoc(doc(db, "servers", serverId)),
+    getDocs(query(collection(db, "partnerRequests"), where("userId", "==", userId))),
+  ]);
+  if (!serverSnapshot.exists() || serverSnapshot.data().ownerId !== userId) {
+    throw new Error("You can only request partnership for a server you own.");
+  }
+  if (serverSnapshot.data().isPartner) throw new Error("This server is already an SpawnDex Partner.");
+  if (myRequests.docs.some((item) => item.data().serverId === serverId && item.data().status === "open")) {
+    throw new Error("This server already has a pending partner request.");
+  }
+
   return addDoc(collection(db, "partnerRequests"), {
     userId,
     serverId,
-    serverName,
+    serverName: serverSnapshot.data().name || serverName,
     message: trimmedMessage,
     contact: contact.trim().slice(0, 200),
     status: "open",
@@ -37,7 +49,9 @@ export function declinePartnerRequest(id: string) {
 // across two different rule branches), but each write is independently
 // safe to retry/re-run if one fails partway.
 export async function acceptPartnerRequest(request: PartnerRequest, perks: string) {
-  await updateDoc(doc(db, "partnerRequests", request.id), { status: "accepted" });
-  await updateDoc(doc(db, "servers", request.serverId), { isPartner: true, partnerPerks: perks.trim().slice(0, 500) });
-  await grantRank(request.userId, "partner");
+  const batch = writeBatch(db);
+  batch.update(doc(db, "partnerRequests", request.id), { status: "accepted" });
+  batch.update(doc(db, "servers", request.serverId), { isPartner: true, partnerPerks: perks.trim().slice(0, 500) });
+  batch.update(doc(db, "profiles", request.userId), { rank: "partner" });
+  await batch.commit();
 }

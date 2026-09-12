@@ -1,0 +1,37 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "eduShare Bed Fight",
+    "description": "A fast 1v1 Bed Fight controller for Minecraft Education.",
+    "uuid": "7da5e17a-bf93-4a20-9d9a-506b934f90f7",
+    "version": [
+      1,
+      0,
+      8
+    ],
+    "min_engine_version": [
+      1,
+      20,
+      60
+    ]
+  },
+  "modules": [
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "2c089baa-3aaa-44fb-98e0-186d1af21657",
+      "version": [
+        1,
+        0,
+        8
+      ],
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "1.13.0"
+    }
+  ]
+}

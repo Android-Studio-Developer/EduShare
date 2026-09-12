@@ -11,6 +11,7 @@ const ClickSpark = ({
 }) => {
   const canvasRef = useRef(null);
   const sparksRef = useRef([]);
+  const startAnimationRef = useRef(() => {});
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -51,7 +52,7 @@ const ClickSpark = ({
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
 
-    let animationId;
+    let animationId = null;
 
     const draw = timestamp => {
       const dpr = window.devicePixelRatio || 1;
@@ -84,13 +85,16 @@ const ClickSpark = ({
         return true;
       });
 
-      animationId = requestAnimationFrame(draw);
+      animationId = sparksRef.current.length > 0 ? requestAnimationFrame(draw) : null;
     };
 
-    animationId = requestAnimationFrame(draw);
+    startAnimationRef.current = () => {
+      if (animationId === null) animationId = requestAnimationFrame(draw);
+    };
 
     return () => {
-      cancelAnimationFrame(animationId);
+      if (animationId !== null) cancelAnimationFrame(animationId);
+      startAnimationRef.current = () => {};
     };
   }, [sparkSize, sparkRadius, sparkCount, duration, easeFunc, extraScale]);
 
@@ -106,6 +110,7 @@ const ClickSpark = ({
         color: sparkColor
       }));
       sparksRef.current.push(...newSparks);
+      startAnimationRef.current();
     };
     window.addEventListener('click', handleClick);
     return () => window.removeEventListener('click', handleClick);

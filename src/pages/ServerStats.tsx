@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { BarChart3, Eye, KeyRound, ShoppingBag } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { isStaffRole } from "../lib/moderation";
 import { subscribeToServer } from "../lib/servers";
 import { subscribeToOrders } from "../lib/shop";
 import type { MinecraftServer, ShopOrder } from "../types";
@@ -17,7 +18,7 @@ export default function ServerStats() {
   const [server, setServer] = useState<MinecraftServer | null>(null);
   const [orders, setOrders] = useState<ShopOrder[]>([]);
   useEffect(() => subscribeToServer(id, setServer), [id]);
-  const allowed = !!server && (server.ownerId === user?.uid || (!!user && (server.managerIds ?? []).includes(user.uid)) || role === "owner" || role === "moderator");
+  const allowed = !!server && (server.ownerId === user?.uid || (!!user && (server.managerIds ?? []).includes(user.uid)) || isStaffRole(role));
   useEffect(() => allowed ? subscribeToOrders(id, setOrders) : undefined, [allowed, id]);
   const products = useMemo(() => { const counts = new Map<string, number>(); for (const order of orders) counts.set(order.itemName, (counts.get(order.itemName) ?? 0) + 1); return [...counts].sort((a, b) => b[1] - a[1]).slice(0, 6); }, [orders]);
   if (!server) return <div className="p-20 text-center text-white/40">Loading statistics…</div>;

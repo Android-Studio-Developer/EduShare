@@ -57,7 +57,7 @@ export async function donateCredits(fromUserId: string, fromName: string, toUser
   await ensureWallet(fromUserId);
   const fromRef = doc(db, "wallets", fromUserId);
   const fromSnap = await getDoc(fromRef);
-  if ((fromSnap.data()?.balance ?? 0) < amount) throw new Error("You do not have enough eduShare Credits.");
+  if ((fromSnap.data()?.balance ?? 0) < amount) throw new Error("You do not have enough SpawnDex Credits.");
   const batch = writeBatch(db);
   batch.update(fromRef, { balance: increment(-amount) });
   // set(..., merge) instead of update() — the sender can't read the
@@ -71,7 +71,7 @@ export async function donateCredits(fromUserId: string, fromName: string, toUser
   void createNotification({
     recipientId: toUserId,
     type: "donation",
-    title: `${fromName} sent you ${amount} eduShare Credits`,
+    title: `${fromName} sent you ${amount} SpawnDex Credits`,
     message: trimmedNote || `${amount} credits, no message attached.`,
     link: "/profile",
   });
@@ -96,7 +96,7 @@ export async function buyShopItem(
   await runTransaction(db, async (transaction) => {
     const wallet = await transaction.get(walletRef);
     const balance = wallet.data()?.balance ?? 0;
-    if (balance < item.price) throw new Error("You do not have enough eduShare Credits.");
+    if (balance < item.price) throw new Error("You do not have enough SpawnDex Credits.");
     transaction.update(walletRef, { balance: balance - item.price });
     transaction.set(orderRef, {
       buyerId,
