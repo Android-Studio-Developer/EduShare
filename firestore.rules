@@ -642,6 +642,42 @@ service cloud.firestore {
       function existingOwnedCosmetics() {
         return ('ownedCosmetics' in resource.data) ? resource.data.ownedCosmetics : [];
       }
+      function existingNameFont() {
+        return ('nameFont' in resource.data) ? resource.data.nameFont : '';
+      }
+      function nextNameFont() {
+        return ('nameFont' in request.resource.data) ? request.resource.data.nameFont : '';
+      }
+      function existingNameEffect() {
+        return ('nameEffect' in resource.data) ? resource.data.nameEffect : '';
+      }
+      function nextNameEffect() {
+        return ('nameEffect' in request.resource.data) ? request.resource.data.nameEffect : '';
+      }
+      function existingNameplateEffect() {
+        return ('nameplateEffect' in resource.data) ? resource.data.nameplateEffect : '';
+      }
+      function nextNameplateEffect() {
+        return ('nameplateEffect' in request.resource.data) ? request.resource.data.nameplateEffect : '';
+      }
+      function existingNameColor() {
+        return ('nameColor' in resource.data) ? resource.data.nameColor : '';
+      }
+      function nextNameColor() {
+        return ('nameColor' in request.resource.data) ? request.resource.data.nameColor : '';
+      }
+      function existingPfpEffect() {
+        return ('pfpEffect' in resource.data) ? resource.data.pfpEffect : '';
+      }
+      function nextPfpEffect() {
+        return ('pfpEffect' in request.resource.data) ? request.resource.data.pfpEffect : '';
+      }
+      function existingProfileEffect() {
+        return ('profileEffect' in resource.data) ? resource.data.profileEffect : '';
+      }
+      function nextProfileEffect() {
+        return ('profileEffect' in request.resource.data) ? request.resource.data.profileEffect : '';
+      }
       function existingReferralRewardPending() {
         return ('referralRewardPending' in resource.data) ? resource.data.referralRewardPending : 0;
       }
@@ -746,8 +782,8 @@ service cloud.firestore {
           && request.resource.data.ownedCosmetics.hasAll(existingOwnedCosmetics())
           && fullCost > 0
           && !existingOwnedCosmetics().hasAny([itemId])
-          && (request.resource.data.profileEffect == resource.data.profileEffect
-              || request.resource.data.profileEffect == itemId)
+          && (nextProfileEffect() == existingProfileEffect()
+              || nextProfileEffect() == itemId)
           && (balanceAfter == balanceBefore - fullCost
               || balanceAfter == balanceBefore - promoCost);
       }
@@ -909,12 +945,12 @@ service cloud.firestore {
                           == get(/databases/$(database)/documents/wallets/$(userId)).data.balance - 140))
                 || (request.resource.data.diff(resource.data).affectedKeys()
                       .hasOnly(['nameFont', 'nameEffect', 'nameplateEffect', 'nameColor', 'pfpEffect', 'profileEffect'])
-                    && (!('nameFont' in request.resource.data) || request.resource.data.nameFont == '' || request.resource.data.nameFont in existingOwnedCosmetics())
-                    && (!('nameEffect' in request.resource.data) || request.resource.data.nameEffect == '' || request.resource.data.nameEffect in existingOwnedCosmetics())
-                    && (!('nameplateEffect' in request.resource.data) || request.resource.data.nameplateEffect == '' || request.resource.data.nameplateEffect in existingOwnedCosmetics())
-                    && (!('nameColor' in request.resource.data) || (request.resource.data.nameColor is string && request.resource.data.nameColor.size() <= 12))
-                    && (!('pfpEffect' in request.resource.data) || request.resource.data.pfpEffect == '' || request.resource.data.pfpEffect in existingOwnedCosmetics())
-                    && (!('profileEffect' in request.resource.data) || request.resource.data.profileEffect == '' || request.resource.data.profileEffect in existingOwnedCosmetics()))
+                    && (nextNameFont() == existingNameFont() || nextNameFont() == '' || nextNameFont() in existingOwnedCosmetics())
+                    && (nextNameEffect() == existingNameEffect() || nextNameEffect() == '' || nextNameEffect() in existingOwnedCosmetics())
+                    && (nextNameplateEffect() == existingNameplateEffect() || nextNameplateEffect() == '' || nextNameplateEffect() in existingOwnedCosmetics())
+                    && (nextNameColor() == existingNameColor() || (nextNameColor() is string && nextNameColor().size() <= 12))
+                    && (nextPfpEffect() == existingPfpEffect() || nextPfpEffect() == '' || nextPfpEffect() in existingOwnedCosmetics())
+                    && (nextProfileEffect() == existingProfileEffect() || nextProfileEffect() == '' || nextProfileEffect() in existingOwnedCosmetics()))
                 || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['referralRewardPending'])
                     && request.resource.data.referralRewardPending == 0
                     && existingReferralRewardPending() > 0
