@@ -100,7 +100,10 @@ export async function createDeveloperBot(ownerId: string, ownerName: string, nam
       enabled: false,
       verificationEnabled: false,
       prefix: "?",
-      commands: [{ name: "hello", response: "Hey {user}!" }],
+      commands: [
+        { name: "join", response: "**✅ Authentication panel**\nWelcome {user}! You are verified. Extra info: {args}\n▸ Joined + verified", action: "verify" },
+        { name: "help", response: "Commands: join, help. Type {args} after a command to send info to the bot.", action: "reply" },
+      ],
       createdAt: now,
       updatedAt: now,
     });

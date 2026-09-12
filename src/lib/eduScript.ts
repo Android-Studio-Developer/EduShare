@@ -5,10 +5,60 @@ export interface EduScriptResult {
   errors: string[];
 }
 
-const functionPattern = /^def\s+([a-z_][a-z0-9_]{0,23})\s*\(\s*user\s*,\s*args\s*\)\s*:\s*$/i;
-const assignmentPattern = /^([a-z_][a-z0-9_]*)\s*=\s*f?(["'])(.*)\2\s*$/i;
-const returnPattern = /^return\s+f?(["'])(.*)\1\s*$/i;
-const returnVariablePattern = /^return\s+([a-z_][a-z0-9_]*)\s*$/i;
+export interface EduScriptTemplate {
+  id: string;
+  name: string;
+  description: string;
+  source: string;
+}
+
+const headerPatterns = [
+  /^def\s+([a-z_][a-z0-9_]{0,23})\s*\(\s*user\s*,\s*args\s*\)\s*:\s*$/i,
+  /^command\s+([a-z_][a-z0-9_-]{0,23})\s*:\s*$/i,
+  /^on\s+([a-z_][a-z0-9_-]{0,23})\s*:\s*$/i,
+];
+const assignmentPattern = /^(?:let\s+)?([a-z_][a-z0-9_]*)\s*=\s*f?(["'])(.*)\2\s*$/i;
+const outputPattern = /^(?:return|reply|say|send)\s+f?(["'])(.*)\1\s*$/i;
+const outputVariablePattern = /^(?:return|reply|say|send)\s+([a-z_][a-z0-9_]*)\s*$/i;
+const embedPattern = /^embed\s+f?(["'])(.*)\1\s*$/i;
+const buttonPattern = /^button\s+f?(["'])(.*)\1\s*$/i;
+const authenticatePattern = /^(?:authenticate|verify)\s+user\s*$/i;
+
+export const eduScriptTemplates: EduScriptTemplate[] = [
+  {
+    id: "auth-panel",
+    name: "Join + authenticate panel",
+    description: "Users run one command, get verified, and receive join instructions.",
+    source: `# People type: /yourbot join minecraft-name
+@verify
+command join:
+    authenticate user
+    embed "✅ Authentication panel"
+    say "Welcome {user}! You are verified. Join code / extra info: {args}"
+    button "Joined + verified"`,
+  },
+  {
+    id: "server-helper",
+    name: "Minecraft server helper",
+    description: "Replies with server status, code, and quick help.",
+    source: `command code:
+    embed "🎮 MC Education"
+    say "Join code: ABC123 • Ask staff if the world is full."
+    button "Copy join code"
+
+command help:
+    say "Commands: code, rules, verify. Args are whatever the user types after the command."`,
+  },
+  {
+    id: "support-bot",
+    name: "Support ticket starter",
+    description: "Collects a short problem description using {args}.",
+    source: `command ticket:
+    embed "🛠️ Support request"
+    say "{user} needs help with: {args}"
+    button "Staff will reply soon"`,
+  },
+];
 
 function decodeString(value: string) {
   return value.replace(/\\n/g, "\n").replace(/\\([\\"'])/g, "$1");
@@ -16,6 +66,24 @@ function decodeString(value: string) {
 
 function encodeString(value: string) {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+}
+
+function cleanCommandName(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 24);
+}
+
+function parseHeader(line: string) {
+  for (const pattern of headerPatterns) {
+    const match = line.match(pattern);
+    if (match) return cleanCommandName(match[1]);
+  }
+  return "";
+}
+
+function appendLine(current: string, next: string) {
+  const clean = next.trim();
+  if (!clean) return current;
+  return current ? `${current}\n${clean}` : clean;
 }
 
 /** Compile the deliberately small, Python-shaped EduPy language into safe bot commands. */
@@ -30,31 +98,32 @@ export function compileEduScript(source: string): EduScriptResult {
     const line = rawLine.trim();
     const lineNumber = index + 1;
     if (!line || line.startsWith("#")) continue;
-    if (line.toLowerCase() === "@verify") {
-      if (verificationDecoratorLine) errors.push(`Line ${lineNumber}: the previous @verify needs a function.`);
+    if (/^@(verify|auth|authenticate)$/i.test(line)) {
+      if (verificationDecoratorLine) errors.push(`Line ${lineNumber}: the previous @verify needs a command below it.`);
       verificationDecoratorLine = lineNumber;
       continue;
     }
 
-    const functionMatch = line.match(functionPattern);
-    if (!functionMatch) {
+    const name = parseHeader(line);
+    if (!name) {
       verificationDecoratorLine = 0;
-      errors.push(`Line ${lineNumber}: expected def command(user, args):`);
+      errors.push(`Line ${lineNumber}: expected command name:, on name:, or def name(user, args):`);
       continue;
     }
 
-    const name = functionMatch[1].toLowerCase();
     let blockIndex = index + 1;
     while (blockIndex < lines.length && (!lines[blockIndex].trim() || lines[blockIndex].trim().startsWith("#"))) blockIndex += 1;
     if (blockIndex >= lines.length || !/^\s+/.test(lines[blockIndex])) {
-      errors.push(`Line ${lineNumber}: add an indented return below this function.`);
+      errors.push(`Line ${lineNumber}: add indented actions below this command.`);
       verificationDecoratorLine = 0;
       continue;
     }
 
     const variables = new Map<string, string>();
     let response = "";
+    let action: DeveloperBotCommand["action"] = verificationDecoratorLine ? "verify" : "reply";
     let lastBlockIndex = blockIndex;
+    let ended = false;
 
     for (; blockIndex < lines.length; blockIndex += 1) {
       const blockRaw = lines[blockIndex];
@@ -72,37 +141,58 @@ export function compileEduScript(source: string): EduScriptResult {
         continue;
       }
 
-      const returnMatch = blockLine.match(returnPattern);
-      if (returnMatch) {
-        response = decodeString(returnMatch[2]);
-        break;
+      if (authenticatePattern.test(blockLine)) {
+        action = "verify";
+        continue;
       }
 
-      const returnVariableMatch = blockLine.match(returnVariablePattern);
-      if (returnVariableMatch) {
-        const value = variables.get(returnVariableMatch[1].toLowerCase());
-        if (typeof value === "string") response = value;
-        else errors.push(`Line ${blockIndex + 1}: "${returnVariableMatch[1]}" was not assigned a string.`);
-        break;
+      const embedMatch = blockLine.match(embedPattern);
+      if (embedMatch) {
+        response = appendLine(response, `**${decodeString(embedMatch[2])}**`);
+        continue;
       }
 
-      errors.push(`Line ${blockIndex + 1}: expected name = "text" or return f"Your reply"`);
+      const buttonMatch = blockLine.match(buttonPattern);
+      if (buttonMatch) {
+        response = appendLine(response, `▸ ${decodeString(buttonMatch[2])}`);
+        continue;
+      }
+
+      const outputMatch = blockLine.match(outputPattern);
+      if (outputMatch) {
+        response = appendLine(response, decodeString(outputMatch[2]));
+        ended = blockLine.toLowerCase().startsWith("return");
+        if (ended) break;
+        continue;
+      }
+
+      const outputVariableMatch = blockLine.match(outputVariablePattern);
+      if (outputVariableMatch) {
+        const value = variables.get(outputVariableMatch[1].toLowerCase());
+        if (typeof value === "string") response = appendLine(response, value);
+        else errors.push(`Line ${blockIndex + 1}: "${outputVariableMatch[1]}" was not assigned a string.`);
+        ended = blockLine.toLowerCase().startsWith("return");
+        if (ended) break;
+        continue;
+      }
+
+      errors.push(`Line ${blockIndex + 1}: expected say "text", embed "title", button "label", authenticate user, let name = "text", or return "text".`);
     }
 
-    if (!response && !errors.some((error) => error.startsWith(`Line ${lineNumber}:`))) errors.push(`Line ${lastBlockIndex + 1}: add a return for this command.`);
-    if (!response.trim()) errors.push(`Line ${lastBlockIndex + 1}: the returned reply cannot be empty.`);
+    if (!response && !errors.some((error) => error.startsWith(`Line ${lineNumber}:`))) errors.push(`Line ${lastBlockIndex + 1}: add a say/reply/return for this command.`);
+    if (!response.trim()) errors.push(`Line ${lastBlockIndex + 1}: the reply cannot be empty.`);
     if (response.length > 300) errors.push(`Line ${lastBlockIndex + 1}: reply is longer than 300 characters.`);
     if (commands.some((command) => command.name === name)) errors.push(`Line ${lineNumber}: "${name}" is already defined.`);
-    if (response.trim() && response.length <= 300 && !commands.some((command) => command.name === name)) commands.push({ name, response, action: verificationDecoratorLine ? "verify" : "reply" });
+    if (response.trim() && response.length <= 300 && !commands.some((command) => command.name === name)) commands.push({ name, response, action });
     verificationDecoratorLine = 0;
-    index = Math.max(index, lastBlockIndex);
+    index = Math.max(index, ended ? blockIndex : lastBlockIndex);
   }
 
   if (commands.length > 12) errors.push("Bots can have up to 12 commands.");
-  if (verificationDecoratorLine) errors.push(`Line ${verificationDecoratorLine}: @verify needs a function below it.`);
+  if (verificationDecoratorLine) errors.push(`Line ${verificationDecoratorLine}: @verify needs a command below it.`);
   return { commands: commands.slice(0, 12), errors };
 }
 
 export function commandsToEduScript(commands: DeveloperBotCommand[]) {
-  return commands.map((command) => `${command.action === "verify" ? "@verify\n" : ""}def ${command.name}(user, args):\n    return f"${encodeString(command.response)}"`).join("\n\n");
+  return commands.map((command) => `${command.action === "verify" ? "@verify\n" : ""}command ${command.name}:\n    say "${encodeString(command.response)}"`).join("\n\n");
 }
