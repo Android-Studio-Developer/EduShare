@@ -110,6 +110,16 @@ function renderWithMentions(text: string, myName: string, myUsername: string, em
   );
 }
 
+function publicEmojiPool(profiles: UserProfile[], authorId: string) {
+  const byName = new Map<string, CustomEmoji>();
+  const author = profiles.find((profile) => profile.id === authorId);
+  [...(author?.customEmojis ?? []), ...profiles.flatMap((profile) => profile.customEmojis ?? [])].forEach((emoji) => {
+    const name = emoji.name.toLowerCase();
+    if (!byName.has(name) && emoji.url) byName.set(name, { ...emoji, name });
+  });
+  return [...byName.values()];
+}
+
 function formatTypers(names: string[]) {
   if (names.length === 1) return `${names[0]} is typing`;
   if (names.length === 2) return `${names[0]} and ${names[1]} are typing`;
@@ -820,7 +830,7 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
                     </div>
                   </div>
                 ) : (
-                  <p className="text-sm break-words text-white/70 [overflow-wrap:anywhere]">{renderWithMentions(m.text, myName ?? "", myProfile?.usernameLower ?? "", allProfiles.find((profile) => profile.id === m.authorId)?.customEmojis)}</p>
+                  <p className="text-sm break-words text-white/70 [overflow-wrap:anywhere]">{renderWithMentions(m.text, myName ?? "", myProfile?.usernameLower ?? "", publicEmojiPool(allProfiles, m.authorId))}</p>
                 )}
                 {m.fileUrl && (
                   m.fileType?.startsWith("image/") ? (

@@ -8,7 +8,7 @@ import { subscribeToGuilds } from "../lib/guilds";
 import { createNotification } from "../lib/notifications";
 import { isStaffRole } from "../lib/moderation";
 import { rankNameClass } from "../lib/ranks";
-import type { ChatMessage, CommunityChatServer, Guild, UserProfile } from "../types";
+import type { ChatMessage, CommunityChatServer, CustomEmoji, Guild, UserProfile } from "../types";
 import Button from "./Button";
 import ProfileCard from "./ProfileCard";
 import RankBadge from "./RankBadge";
@@ -21,6 +21,29 @@ function timeAgo(ts: number) {
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
   return `${Math.floor(seconds / 86400)}d`;
+}
+
+const EMOJI_RE = /(:[a-z0-9_]{1,20}:)/gi;
+
+function publicEmojiPool(profiles: UserProfile[], authorId: string) {
+  const byName = new Map<string, CustomEmoji>();
+  const author = profiles.find((item) => item.id === authorId);
+  [...(author?.customEmojis ?? []), ...profiles.flatMap((item) => item.customEmojis ?? [])].forEach((emoji) => {
+    const name = emoji.name.toLowerCase();
+    if (!byName.has(name) && emoji.url) byName.set(name, { ...emoji, name });
+  });
+  return byName;
+}
+
+function renderEmojiText(text: string, emojis: Map<string, CustomEmoji>) {
+  const exact = text.trim().match(/^:([a-z0-9_]{1,20}):$/i);
+  const exactEmoji = exact ? emojis.get(exact[1].toLowerCase()) : undefined;
+  if (exactEmoji) return <img src={exactEmoji.url} alt={`:${exactEmoji.name}:`} title={`:${exactEmoji.name}:`} className="my-1 h-24 w-24 object-contain"/>;
+  return text.split(EMOJI_RE).map((part, index) => {
+    const match = part.match(/^:([a-z0-9_]{1,20}):$/i);
+    const emoji = match ? emojis.get(match[1].toLowerCase()) : undefined;
+    return emoji ? <img key={`${emoji.id}-${index}`} src={emoji.url} alt={`:${emoji.name}:`} title={`:${emoji.name}:`} className="mx-0.5 inline-block h-8 w-8 align-middle object-contain"/> : part;
+  });
 }
 
 export default function CommunityServerChat({ server, embedded = false, channelId = "general", channelName = "general" }: { server: CommunityChatServer; embedded?: boolean; channelId?: string; channelName?: string }) {
@@ -118,7 +141,7 @@ export default function CommunityServerChat({ server, embedded = false, channelI
             <button type="button" onClick={() => setOpenProfileId(message.authorId)} className="cursor-target shrink-0">
               {message.authorPhotoUrl ? <img src={message.authorPhotoUrl} alt="" className="h-9 w-9 rounded-full object-cover"/> : <span className="grid h-9 w-9 place-items-center rounded-full bg-brand-500/15 font-bold text-brand-300">{message.authorName.slice(0, 1).toUpperCase()}</span>}
             </button>
-            <div className="min-w-0 flex-1">{message.replyToId && <button type="button" onClick={() => document.getElementById(`community-message-${message.replyToId}`)?.scrollIntoView({ behavior: "smooth", block: "center" })} className="cursor-target mb-1 flex max-w-full items-center gap-1.5 text-left text-[10px] text-white/35 hover:text-white/55"><Reply size={10}/><span className="shrink-0 font-semibold text-brand-300/70">{message.replyToAuthor}</span><span className="truncate">{message.replyToText}</span>{message.replyPing === false && <BellOff size={9}/>}</button>}<div className="flex flex-wrap items-center gap-1.5"><button type="button" onClick={() => setOpenProfileId(message.authorId)} className={`cursor-target truncate text-sm font-semibold ${rankNameClass(message.authorRank)}`}>{message.authorName}</button><GuildTag tag={guildByProfileId.get(message.authorId)?.tag} icon={guildByProfileId.get(message.authorId)?.tagIcon} font={guildByProfileId.get(message.authorId)?.tagFont} imageUrl={guildByProfileId.get(message.authorId)?.tagImageUrl} color={guildByProfileId.get(message.authorId)?.tagColor}/><RankBadge rank={message.authorRank}/><span className="text-[10px] text-white/25">{timeAgo(message.createdAt)}</span>{message.deliveryState === "sending" ? <Clock3 size={10} className="text-amber-300/60"/> : message.authorId === user?.uid ? <CheckCheck size={10} className="text-emerald-300/45"/> : null}</div><p className="mt-0.5 break-words text-sm text-white/72 [overflow-wrap:anywhere]">{message.text}</p></div>
+            <div className="min-w-0 flex-1">{message.replyToId && <button type="button" onClick={() => document.getElementById(`community-message-${message.replyToId}`)?.scrollIntoView({ behavior: "smooth", block: "center" })} className="cursor-target mb-1 flex max-w-full items-center gap-1.5 text-left text-[10px] text-white/35 hover:text-white/55"><Reply size={10}/><span className="shrink-0 font-semibold text-brand-300/70">{message.replyToAuthor}</span><span className="truncate">{message.replyToText}</span>{message.replyPing === false && <BellOff size={9}/>}</button>}<div className="flex flex-wrap items-center gap-1.5"><button type="button" onClick={() => setOpenProfileId(message.authorId)} className={`cursor-target truncate text-sm font-semibold ${rankNameClass(message.authorRank)}`}>{message.authorName}</button><GuildTag tag={guildByProfileId.get(message.authorId)?.tag} icon={guildByProfileId.get(message.authorId)?.tagIcon} font={guildByProfileId.get(message.authorId)?.tagFont} imageUrl={guildByProfileId.get(message.authorId)?.tagImageUrl} color={guildByProfileId.get(message.authorId)?.tagColor}/><RankBadge rank={message.authorRank}/><span className="text-[10px] text-white/25">{timeAgo(message.createdAt)}</span>{message.deliveryState === "sending" ? <Clock3 size={10} className="text-amber-300/60"/> : message.authorId === user?.uid ? <CheckCheck size={10} className="text-emerald-300/45"/> : null}</div><p className="mt-0.5 break-words text-sm text-white/72 [overflow-wrap:anywhere]">{renderEmojiText(message.text, publicEmojiPool(profiles, message.authorId))}</p></div>
             <button type="button" onClick={() => { setReplyTo(message); setReplyPing(true); }} aria-label={`Reply to ${message.authorName}`} className="cursor-target rounded p-1.5 text-white/25 opacity-0 hover:bg-white/10 hover:text-[#dbdee1] group-hover:opacity-100"><Reply size={13}/></button>
             {(user?.uid === message.authorId || user?.uid === server.ownerId || isStaffRole(role)) && <button type="button" onClick={() => void deleteCommunityChatMessage(server.id, message.id, channelId)} aria-label="Delete message" className="cursor-target opacity-0 rounded p-1.5 text-white/25 hover:bg-red-500/10 hover:text-red-300 group-hover:opacity-100"><Trash2 size={13}/></button>}
           </div>
