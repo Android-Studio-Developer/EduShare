@@ -6,6 +6,11 @@ import App from "./App.tsx";
 import { getUiVersion, setUiVersion } from "./lib/uiVersion";
 import { getColorTheme, setColorTheme } from "./lib/colorTheme";
 import { isLowPowerDevice } from "./lib/accessibility";
+import { recoverFromChunkLoadError } from "./lib/chunkRecovery";
+
+window.addEventListener("vite:preloadError", (event) => {
+  if (recoverFromChunkLoadError(event.payload)) event.preventDefault();
+});
 
 setUiVersion(getUiVersion());
 setColorTheme(getColorTheme());
