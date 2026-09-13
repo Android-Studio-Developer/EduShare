@@ -1,6 +1,7 @@
-import { addDoc, arrayUnion, collection, deleteDoc, doc, getDocs, limit, onSnapshot, orderBy, query, runTransaction, updateDoc, writeBatch } from "firebase/firestore";
+import { addDoc, arrayUnion, collection, deleteDoc, doc, getDocs, increment, limit, onSnapshot, orderBy, query, runTransaction, updateDoc, where, writeBatch } from "firebase/firestore";
 import { db } from "./firebase";
 import type { ChatMessage, CommunityChatServer, Rank } from "../types";
+import { COMMUNITY_SERVER_BOOST_COST } from "./communityServerBoosts";
 
 const serversRef = collection(db, "communityChatServers");
 const DEFAULT_TEXT_CHANNELS = [{ id: "general", name: "general" }, { id: "rules", name: "rules" }];
@@ -8,6 +9,10 @@ const DEFAULT_VOICE_CHANNELS = [{ id: "lounge", name: "Lounge" }];
 
 function inviteCode() {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
+}
+
+function legacyInviteCode(id: string) {
+  return id.replace(/[^a-z0-9]/gi, "").slice(0, 8).toUpperCase();
 }
 
 function withServerDefaults(id: string, data: Record<string, unknown>): CommunityChatServer {
@@ -19,13 +24,15 @@ function withServerDefaults(id: string, data: Record<string, unknown>): Communit
     iconUrl: "",
     bannerUrl: "",
     linkedMinecraftServerId: "",
-    inviteCode: typeof data.inviteCode === "string" ? data.inviteCode : inviteCode(),
+    inviteCode: typeof data.inviteCode === "string" && data.inviteCode ? data.inviteCode : legacyInviteCode(id),
     memberIds: Array.isArray(data.memberIds) ? data.memberIds.filter((item): item is string => typeof item === "string") : ownerId ? [ownerId] : [],
     bannedUserIds: Array.isArray(data.bannedUserIds) ? data.bannedUserIds.filter((item): item is string => typeof item === "string") : [],
     bannedUsernames: Array.isArray(data.bannedUsernames) ? data.bannedUsernames.filter((item): item is string => typeof item === "string") : [],
     roles: typeof data.roles === "object" && data.roles !== null ? data.roles as CommunityChatServer["roles"] : ownerId ? { [ownerId]: "owner" } : {},
     textChannels: Array.isArray(data.textChannels) && data.textChannels.length ? data.textChannels as CommunityChatServer["textChannels"] : DEFAULT_TEXT_CHANNELS,
     voiceChannels: Array.isArray(data.voiceChannels) && data.voiceChannels.length ? data.voiceChannels as CommunityChatServer["voiceChannels"] : DEFAULT_VOICE_CHANNELS,
+    isPublic: typeof data.isPublic === "boolean" ? data.isPublic : true,
+    uploadCount: typeof data.uploadCount === "number" ? data.uploadCount : 0,
     ...data,
   } as CommunityChatServer;
 }
@@ -34,6 +41,17 @@ export function subscribeToCommunityChatServers(callback: (servers: CommunityCha
   return onSnapshot(query(serversRef, orderBy("createdAt", "asc")), (snapshot) => {
     callback(snapshot.docs.map((item) => withServerDefaults(item.id, item.data())));
   });
+}
+
+export function subscribeToCommunityChatServerByInviteCode(code: string, authenticated: boolean, callback: (server: CommunityChatServer | null) => void, onError?: (error: Error) => void) {
+  const normalized = code.trim().toUpperCase();
+  const inviteQuery = authenticated
+    ? query(serversRef, where("inviteCode", "==", normalized), limit(1))
+    : query(serversRef, where("inviteCode", "==", normalized), where("isPublic", "==", true), limit(1));
+  return onSnapshot(inviteQuery, (snapshot) => {
+    const match = snapshot.docs[0];
+    callback(match ? withServerDefaults(match.id, match.data()) : null);
+  }, onError);
 }
 
 export function createCommunityChatServer(input: Pick<CommunityChatServer, "name" | "description" | "rules" | "ownerId" | "ownerName" | "boostCount" | "lastBoostedAt"> & Partial<CommunityChatServer>) {
@@ -49,6 +67,8 @@ export function createCommunityChatServer(input: Pick<CommunityChatServer, "name
     roles: input.roles ?? { [input.ownerId]: "owner" },
     textChannels: input.textChannels ?? DEFAULT_TEXT_CHANNELS,
     voiceChannels: input.voiceChannels ?? DEFAULT_VOICE_CHANNELS,
+    isPublic: input.isPublic ?? true,
+    uploadCount: input.uploadCount ?? 0,
     createdAt: Date.now(),
   });
 }
@@ -60,8 +80,8 @@ export async function boostCommunityChatServer(serverId: string, userId: string)
     const [server, wallet] = await Promise.all([transaction.get(serverRef), transaction.get(walletRef)]);
     if (!server.exists()) throw new Error("That server no longer exists.");
     const balance = Number(wallet.data()?.balance ?? 0);
-    if (balance < 100) throw new Error("You need 100 credits to boost a server.");
-    transaction.update(walletRef, { balance: balance - 100 });
+    if (balance < COMMUNITY_SERVER_BOOST_COST) throw new Error(`You need ${COMMUNITY_SERVER_BOOST_COST} credits to boost a server.`);
+    transaction.update(walletRef, { balance: balance - COMMUNITY_SERVER_BOOST_COST });
     transaction.update(serverRef, {
       boostCount: Number(server.data().boostCount ?? 0) + 1,
       lastBoostedAt: Date.now(),
@@ -69,12 +89,22 @@ export async function boostCommunityChatServer(serverId: string, userId: string)
   });
 }
 
-export function updateCommunityChatServer(serverId: string, input: Partial<Pick<CommunityChatServer, "name" | "description" | "rules" | "iconUrl" | "bannerUrl" | "linkedMinecraftServerId" | "memberIds" | "bannedUserIds" | "bannedUsernames" | "roles" | "textChannels" | "voiceChannels">>) {
+export function updateCommunityChatServer(serverId: string, input: Partial<Pick<CommunityChatServer, "name" | "description" | "rules" | "iconUrl" | "bannerUrl" | "linkedMinecraftServerId" | "memberIds" | "bannedUserIds" | "bannedUsernames" | "roles" | "textChannels" | "voiceChannels" | "isPublic">>) {
   return updateDoc(doc(db, "communityChatServers", serverId), input);
 }
 
 export function joinCommunityChatServer(serverId: string, userId: string) {
   return updateDoc(doc(db, "communityChatServers", serverId), { memberIds: arrayUnion(userId) });
+}
+
+const MAX_SERVER_UPLOADS = 3;
+
+export function communityServerUploadsRemaining(server: Pick<CommunityChatServer, "uploadCount">) {
+  return Math.max(0, MAX_SERVER_UPLOADS - (server.uploadCount ?? 0));
+}
+
+export function recordCommunityServerUpload(serverId: string) {
+  return updateDoc(doc(db, "communityChatServers", serverId), { uploadCount: increment(1) });
 }
 
 export async function deleteCommunityChatServer(serverId: string) {

@@ -6,7 +6,7 @@ import ProfileCard from "../components/ProfileCard";
 import StatusDot from "../components/StatusDot";
 import { useAuth } from "../context/AuthContext";
 import { useVoiceCall } from "../context/VoiceCallContext";
-import { getPresenceStatus, isOnline, subscribeToAllProfiles, subscribeToProfile } from "../lib/profiles";
+import { getPresenceStatus, subscribeToAllProfiles, subscribeToProfile } from "../lib/profiles";
 import { subscribeToCommunityChatServers, updateCommunityChatServer } from "../lib/communityChatServers";
 import { subscribeToServers } from "../lib/servers";
 import { getIcon } from "../lib/icons";
@@ -99,7 +99,6 @@ export default function CommunityServer() {
     return [...new Set([server.ownerId, ...(server.memberIds ?? [])])];
   }, [server]);
   const members = useMemo(() => memberIds.map((id) => profiles.find((profile) => profile.id === id)).filter((item): item is UserProfile => !!item), [memberIds, profiles]);
-  const onlineMembers = useMemo(() => members.filter(isOnline).sort((a, b) => b.lastActiveAt - a.lastActiveAt), [members]);
   const isBannedHere = !!user && (!!server?.bannedUserIds?.includes(user.uid) || [myProfile?.displayName, myProfile?.username].filter(Boolean).some((name) => bannedNames.map((item) => item.toLowerCase()).includes(String(name).toLowerCase())));
   const inviteUrl = typeof window === "undefined" || !server ? "" : `${window.location.origin}/invite/${inviteCode}${myProfile ? `?from=${encodeURIComponent(safeText(myProfile.displayName, ""))}` : ""}`;
   const linkedMinecraftServer = useMemo(() => minecraftServers.find((item) => item.id === server?.linkedMinecraftServerId) ?? null, [minecraftServers, server?.linkedMinecraftServerId]);
@@ -303,7 +302,6 @@ export default function CommunityServer() {
               ) : <p className="mt-3 text-xs leading-5 text-white/35">{canManage ? "Link one in settings to show live MC Edu status and join code." : "No Minecraft server linked yet."}</p>}
             </div>
             <div className="mt-6 border-t border-white/[.08] pt-5"><p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-white/35"><Users size={12}/>Members — {members.length}</p><div className="mt-3 space-y-1">{members.map((profile) => { const profileName = safeText(profile.displayName || profile.username, "Member"); return <button key={profile.id} type="button" onClick={() => setOpenProfileId(profile.id)} className="cursor-target flex w-full items-center gap-2.5 rounded px-2 py-1.5 text-left hover:bg-white/[.06]">{profile.photoUrl ? <img src={profile.photoUrl} alt="" className="h-8 w-8 rounded-full object-cover"/> : <span className="grid h-8 w-8 place-items-center rounded-full bg-white/[.07] text-[10px] font-bold text-white/65">{initial(profileName, "M")}</span>}<span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-[#dbdee1]">{profileName}</span><span className="block text-[10px] uppercase text-white/30">{roleFor(profile)}</span></span><StatusDot status={getPresenceStatus(profile)}/></button>; })}</div></div>
-            <div className="mt-6 border-t border-white/[.08] pt-5"><p className="text-xs font-bold uppercase tracking-wide text-white/35">Online — {onlineMembers.length}</p></div>
           </aside>
         </div>
       </div>

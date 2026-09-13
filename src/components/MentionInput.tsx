@@ -1,9 +1,10 @@
 import { useMemo, useState, type KeyboardEvent } from "react";
-import { AtSign, Radio } from "lucide-react";
+import { AtSign, Radio, Shield } from "lucide-react";
 import { isOnline } from "../lib/profiles";
 import type { UserProfile } from "../types";
 
-type MentionChoice = { id: string; handle: string; label: string; photoUrl: string; online: boolean; special?: boolean };
+type MentionChoice = { id: string; handle: string; label: string; photoUrl: string; online: boolean; special?: boolean; role?: boolean };
+export type RolePingChoice = { handle: string; label: string };
 
 function activeMention(value: string) {
   return value.match(/(?:^|\s)@([\w.]*)$/)?.[1].toLowerCase() ?? null;
@@ -18,6 +19,7 @@ export default function MentionInput({
   disabled,
   className,
   includeSpecial = false,
+  roles = [],
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -27,6 +29,7 @@ export default function MentionInput({
   disabled?: boolean;
   className?: string;
   includeSpecial?: boolean;
+  roles?: RolePingChoice[];
 }) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [dismissed, setDismissed] = useState(false);
@@ -43,11 +46,12 @@ export default function MentionInput({
       { id: "everyone", handle: "everyone", label: "Everyone", photoUrl: "", online: true, special: true },
       { id: "here", handle: "here", label: "Online members", photoUrl: "", online: true, special: true },
     ] : [];
-    return [...specials, ...members]
+    const rolePings: MentionChoice[] = roles.map((r) => ({ id: `role-${r.handle}`, handle: r.handle, label: r.label, photoUrl: "", online: true, special: true, role: true }));
+    return [...specials, ...rolePings, ...members]
       .filter((choice) => !query || choice.handle.toLowerCase().includes(query) || choice.label.toLowerCase().includes(query))
       .sort((a, b) => Number(b.special) - Number(a.special) || Number(b.online) - Number(a.online) || a.label.localeCompare(b.label))
       .slice(0, 12);
-  }, [includeSpecial, profiles, query]);
+  }, [includeSpecial, profiles, query, roles]);
   const open = query !== null && !dismissed && choices.length > 0;
 
   function select(choice: MentionChoice) {
@@ -77,7 +81,7 @@ export default function MentionInput({
           <p className="px-2 pb-1 pt-1 text-[10px] font-bold uppercase tracking-[.18em] text-white/35">Members · online and offline</p>
           {choices.map((choice, index) => (
             <button key={choice.id} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => select(choice)} className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left ${index === activeIndex ? "bg-brand-500/20" : "hover:bg-white/5"}`}>
-              {choice.special ? <span className="grid h-8 w-8 place-items-center rounded-full bg-brand-500/15 text-brand-300"><AtSign size={16}/></span> : choice.photoUrl ? <img src={choice.photoUrl} alt="" className="h-8 w-8 rounded-full object-cover"/> : <span className="grid h-8 w-8 place-items-center rounded-full bg-white/8 text-xs font-bold text-white/65">{choice.label.slice(0, 1).toUpperCase()}</span>}
+              {choice.role ? <span className="grid h-8 w-8 place-items-center rounded-full bg-amber-400/15 text-amber-300"><Shield size={15}/></span> : choice.special ? <span className="grid h-8 w-8 place-items-center rounded-full bg-brand-500/15 text-brand-300"><AtSign size={16}/></span> : choice.photoUrl ? <img src={choice.photoUrl} alt="" className="h-8 w-8 rounded-full object-cover"/> : <span className="grid h-8 w-8 place-items-center rounded-full bg-white/8 text-xs font-bold text-white/65">{choice.label.slice(0, 1).toUpperCase()}</span>}
               <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-white/90">{choice.label}</span><span className="block truncate text-[11px] text-white/35">@{choice.handle}</span></span>
               {!choice.special && <span className={`flex items-center gap-1 text-[10px] ${choice.online ? "text-emerald-300" : "text-white/30"}`}><Radio size={9}/>{choice.online ? "Online" : "Offline"}</span>}
             </button>

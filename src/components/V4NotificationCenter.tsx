@@ -101,11 +101,7 @@ export default function V4NotificationCenter({ open, onClose, onUnreadChange }: 
     return subscribeToNotifications(user.uid, (items) => {
       if (knownNotifications.current === null) knownNotifications.current = new Set(items.map((item) => item.id));
       else {
-        const fresh = items.find((item) => !knownNotifications.current!.has(item.id) && !item.read);
         items.forEach((item) => knownNotifications.current!.add(item.id));
-        if (fresh) {
-          setToast({ id: fresh.id, title: fresh.title, message: fresh.message, link: fresh.link, kind: "notification", notificationId: fresh.id });
-        }
       }
       setNotifications(items);
     });

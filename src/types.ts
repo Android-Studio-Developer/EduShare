@@ -191,6 +191,8 @@ export interface CommunityChatServer {
   boostCount: number;
   lastBoostedAt: number;
   createdAt: number;
+  isPublic?: boolean;
+  uploadCount?: number;
 }
 
 export interface DmMessage {

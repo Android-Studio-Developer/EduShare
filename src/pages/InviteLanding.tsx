@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Radio, Server, Users } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { subscribeToCommunityChatServers, joinCommunityChatServer } from "../lib/communityChatServers";
+import { subscribeToCommunityChatServerByInviteCode, joinCommunityChatServer } from "../lib/communityChatServers";
 import { subscribeToAllProfiles, isOnline } from "../lib/profiles";
 import type { CommunityChatServer, UserProfile } from "../types";
 
@@ -19,23 +19,33 @@ export default function InviteLanding() {
   const [searchParams] = useSearchParams();
   const from = searchParams.get("from") ?? "";
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const [servers, setServers] = useState<CommunityChatServer[]>([]);
+  const { user, loading: authLoading } = useAuth();
+  const [server, setServer] = useState<CommunityChatServer | null>(null);
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
   const [ready, setReady] = useState(false);
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const unsubscribe = subscribeToCommunityChatServers((items) => { setServers(items); setReady(true); });
+    if (authLoading || !code.trim()) return undefined;
+    setReady(false);
+    setError("");
+    const unsubscribe = subscribeToCommunityChatServerByInviteCode(code, !!user, (item) => {
+      setServer(item);
+      setReady(true);
+    }, (cause) => {
+      console.error("Could not open server invite:", cause);
+      setServer(null);
+      setReady(true);
+      setError("This invite could not be opened. Please ask for a new link.");
+    });
     return typeof unsubscribe === "function" ? unsubscribe : undefined;
-  }, []);
+  }, [authLoading, code, user]);
   useEffect(() => {
     const unsubscribe = subscribeToAllProfiles(setProfiles);
     return typeof unsubscribe === "function" ? unsubscribe : undefined;
   }, []);
 
-  const server = useMemo(() => servers.find((item) => item.inviteCode.toLowerCase() === code.toLowerCase()) ?? null, [servers, code]);
   const memberIds = useMemo(() => (server ? [...new Set([server.ownerId, ...(server.memberIds ?? [])])] : []), [server]);
   const onlineCount = useMemo(() => profiles.filter((profile) => memberIds.includes(profile.id) && isOnline(profile)).length, [profiles, memberIds]);
 
@@ -64,7 +74,7 @@ export default function InviteLanding() {
           <>
             <span className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-white/[.06] text-white/25"><Server size={28}/></span>
             <h1 className="mt-4 text-lg font-bold text-white">Invite invalid</h1>
-            <p className="mt-2 text-sm text-white/40">This invite link doesn't lead anywhere, or the server was deleted.</p>
+            <p className="mt-2 text-sm text-white/40">{error || "This invite link doesn't lead anywhere, or the server was deleted."}</p>
             <button type="button" onClick={() => navigate("/chat-servers")} className="cursor-target mt-5 w-full rounded-lg bg-[#5865f2] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#4752c4]">Browse servers</button>
           </>
         ) : (

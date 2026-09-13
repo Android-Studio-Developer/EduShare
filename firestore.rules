@@ -1449,7 +1449,8 @@ service cloud.firestore {
     }
 
     match /communityChatServers/{serverId} {
-      allow read: if request.auth != null;
+      allow read: if request.auth != null
+        || (('isPublic' in resource.data) && resource.data.isPublic == true);
       allow create: if request.auth != null
         && !isBanned()
         && rankTierOf(request.auth.uid) >= 5
@@ -1493,11 +1494,14 @@ service cloud.firestore {
         && request.resource.data.voiceChannels.size() <= 12
         && request.resource.data.boostCount == 0
         && request.resource.data.lastBoostedAt == 0
+        && (!('isPublic' in request.resource.data) || request.resource.data.isPublic is bool)
+        && (!('uploadCount' in request.resource.data) || request.resource.data.uploadCount == 0)
         && request.resource.data.createdAt is int
         && request.resource.data.createdAt <= request.time.toMillis();
       allow update: if request.auth != null
         && (resource.data.ownerId == request.auth.uid || isStaff())
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'description', 'rules', 'iconUrl', 'bannerUrl', 'linkedMinecraftServerId', 'memberIds', 'bannedUserIds', 'bannedUsernames', 'roles', 'textChannels', 'voiceChannels'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'description', 'rules', 'iconUrl', 'bannerUrl', 'linkedMinecraftServerId', 'memberIds', 'bannedUserIds', 'bannedUsernames', 'roles', 'textChannels', 'voiceChannels', 'isPublic'])
+        && (!('isPublic' in request.resource.data) || request.resource.data.isPublic is bool)
         && (!('name' in request.resource.data) || (request.resource.data.name is string
           && request.resource.data.name.size() >= 3
           && request.resource.data.name.size() <= 40))
@@ -1544,7 +1548,12 @@ service cloud.firestore {
         && request.resource.data.lastBoostedAt > (('lastBoostedAt' in resource.data) ? resource.data.lastBoostedAt : 0)
         && request.resource.data.lastBoostedAt <= request.time.toMillis()
         && getAfter(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance
-          == get(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance - 100;
+          == get(/databases/$(database)/documents/wallets/$(request.auth.uid)).data.balance - 800;
+      allow update: if request.auth != null
+        && (resource.data.ownerId == request.auth.uid || isStaff())
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uploadCount'])
+        && request.resource.data.uploadCount == (('uploadCount' in resource.data) ? resource.data.uploadCount : 0) + 1
+        && request.resource.data.uploadCount <= 3;
       allow delete: if request.auth != null && (resource.data.ownerId == request.auth.uid || isStaff());
 
       match /messages/{messageId} {
