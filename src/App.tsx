@@ -26,6 +26,7 @@ import ClickSpark from "./components/ClickSpark";
 import ReferralRewardPopup from "./components/ReferralRewardPopup";
 import CosmeticsNudge from "./components/CosmeticsNudge";
 import ChatRoomBoundary from "./components/ChatRoomBoundary";
+import AppErrorBoundary from "./components/AppErrorBoundary";
 import Navbar from "./components/Navbar";
 import Sidebar from "./components/Sidebar";
 import V3Shell from "./components/V3Shell";
@@ -67,6 +68,7 @@ const Changelog = lazy(() => import("./pages/Changelog"));
 const Recover = lazy(() => import("./pages/Recover"));
 const Develop = lazy(() => import("./pages/Develop"));
 const Fun = lazy(() => import("./pages/Fun"));
+const InviteLanding = lazy(() => import("./pages/InviteLanding"));
 
 const UNLOCK_KEY = "edushare-site-gate-v2";
 
@@ -107,6 +109,7 @@ function AppContent() {
       <Route path="/chat/servers/:serverId" element={<ProtectedRoute><ChatRoomBoundary roomName="Server panel" resetKey={location.pathname + location.search}><CommunityServer /></ChatRoomBoundary></ProtectedRoute>} />
       <Route path="/chat-servers" element={<ProtectedRoute><ChatServers /></ProtectedRoute>} />
       <Route path="/chat-servers/:serverId" element={<ProtectedRoute><ChatRoomBoundary roomName="Server panel" resetKey={location.pathname + location.search}><CommunityServer /></ChatRoomBoundary></ProtectedRoute>} />
+      <Route path="/invite/:code" element={<ChatRoomBoundary roomName="Invite"><InviteLanding /></ChatRoomBoundary>} />
       <Route path="/voice" element={<ProtectedRoute><Voice /></ProtectedRoute>} />
       <Route path="/voice-lab" element={<ProtectedRoute><VoiceLab /></ProtectedRoute>} />
       <Route path="/movie-drop" element={<ProtectedRoute><MovieDrop /></ProtectedRoute>} />
@@ -149,6 +152,10 @@ function AppContent() {
   const body = banned && role !== "owner" ? <BannedNotice /> : routes;
 
   if (location.pathname === "/login" || location.pathname === "/signup") {
+    return body;
+  }
+
+  if (location.pathname.startsWith("/chat-servers/") || location.pathname.startsWith("/chat/servers/")) {
     return body;
   }
 
@@ -247,7 +254,7 @@ function RealApp() {
                 <CosmeticsNudge />
                 <StealthMode />
                 {!reduceMotion && <ClickSpark sparkColor="#93b4ff" sparkCount={8} sparkRadius={18} duration={450} />}
-                <AppContent />
+                <AppErrorBoundary><AppContent /></AppErrorBoundary>
             </VoiceCallProvider>
           </MusicProvider>
         </AuthProvider>

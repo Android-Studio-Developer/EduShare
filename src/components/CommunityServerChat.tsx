@@ -180,7 +180,7 @@ export default function CommunityServerChat({ server, embedded = false, channelI
   }
 
   return (
-    <div className={`flex h-full min-h-[700px] flex-col overflow-hidden bg-[#313338] ${embedded ? "rounded-none border-0" : "rounded-2xl border border-black/35"}`}>
+    <div className={`flex h-full min-h-0 flex-col overflow-hidden bg-[#313338] ${embedded ? "rounded-none border-0" : "rounded-2xl border border-black/35"}`}>
       <header className="flex h-[49px] items-center gap-3 border-b border-black/35 bg-[#313338] px-4 shadow-sm shadow-black/20">
         <Hash size={22} className="shrink-0 text-[#80848e]" />
         <div className="min-w-0 flex-1"><h2 className="truncate text-base font-bold text-white">{roomName}</h2></div><span className={`ml-auto flex items-center gap-1 rounded px-2 py-1 text-[10px] ${chatStatus === "online" ? "text-emerald-300/80" : chatStatus === "reconnecting" ? "text-amber-300/80" : "text-red-300/80"}`}>{chatStatus === "online" ? <Wifi size={11}/> : <WifiOff size={11}/>} {chatStatus}</span>
@@ -201,9 +201,9 @@ export default function CommunityServerChat({ server, embedded = false, channelI
           </div>
         );})}
       </div>
-      <form onSubmit={submit} className="px-4 pb-5 pt-2">
+      <form onSubmit={submit} className="px-4 pb-4 pt-2">
         {replyTo && <div className="mb-2 flex items-center gap-2 rounded-xl border border-brand-400/15 bg-brand-500/[.06] px-3 py-2 text-xs"><Reply size={13} className="text-brand-300"/><span className="min-w-0 flex-1 truncate text-white/55">Replying to <b className="text-white/80">{safeText(replyTo.authorName, "Member")}</b>: {safeText(replyTo.text)}</span><button type="button" role="switch" aria-checked={replyPing} onClick={() => setReplyPing((value) => !value)} className={`cursor-target flex shrink-0 items-center gap-1 rounded-lg border px-2 py-1 font-semibold ${replyPing ? "border-brand-400/35 bg-brand-500/15 text-brand-200" : "border-white/10 text-white/35"}`}>{replyPing ? <Bell size={11}/> : <BellOff size={11}/>} {replyPing ? "Ping on" : "Ping off"}</button><button type="button" onClick={() => { setReplyTo(null); setReplyPing(true); }} aria-label="Cancel reply" className="cursor-target p-1 text-white/35 hover:text-white"><X size={13}/></button></div>}
-        <div className="flex gap-2"><MentionInput value={text} onChange={setText} profiles={profiles} disabled={!user} maxLength={300} placeholder={user ? `Message #${roomName}` : "Log in to chat"} includeSpecial roles={[{ handle: "admins", label: "Admins" }, { handle: "mods", label: "Mods" }, { handle: "owner", label: "Owner" }]} className="w-full rounded-lg border-0 bg-[#383a40] px-4 py-3 text-sm text-white placeholder:text-[#949ba4] focus:outline-none"/><Button type="submit" disabled={!user || sending || !text.trim()}><Send size={15}/></Button></div>
+        <div className="flex gap-2"><MentionInput value={text} onChange={setText} profiles={profiles} disabled={!user} maxLength={300} placeholder={user ? `Message #${roomName}` : "Log in to chat"} includeSpecial roles={[{ handle: "admins", label: "Admins" }, { handle: "mods", label: "Mods" }, { handle: "owner", label: "Owner" }]} className="w-full rounded-lg border-0 bg-[#383a40] px-4 py-3 text-sm text-white placeholder:text-[#949ba4] focus:outline-none"/><Button type="submit" disabled={!user || sending || !text.trim()} className="bg-[#5865f2] hover:bg-[#4752c4]"><Send size={15}/></Button></div>
         {notice && <p className="chat-system-notice mt-2 text-xs text-amber-300">{notice}</p>}
       </form>
       {openProfileId && <ProfileCard userId={openProfileId} onClose={() => setOpenProfileId(null)}/>} 

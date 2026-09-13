@@ -224,47 +224,54 @@ export default function CommunityServer() {
   }
 
   return (
-    <div className="-mx-3 -my-5 min-h-[calc(100vh-4rem)] bg-[#313338] text-white sm:-mx-5 sm:-my-8">
-      <div className="flex min-h-[calc(100vh-4rem)] w-full overflow-hidden bg-[#313338] shadow-2xl shadow-black/30">
-        <div className="grid min-h-[calc(100vh-4rem)] w-full grid-cols-1 lg:grid-cols-[72px_240px_minmax(0,1fr)_300px]">
-          <aside className="hidden bg-[#1e1f22] p-3 lg:block">
-            <Link to="/chat-servers" aria-label="Browse servers" className="cursor-target grid h-12 w-12 place-items-center rounded-2xl bg-[#5865f2] text-white shadow-lg shadow-black/30"><ArrowLeft size={20}/></Link>
+    <div className="fixed inset-0 z-40 bg-[#313338] text-white">
+      <div className="flex h-screen w-screen overflow-hidden bg-[#313338]">
+        <div className="grid h-screen w-full grid-cols-[72px_240px_minmax(0,1fr)] xl:grid-cols-[72px_240px_minmax(0,1fr)_300px]">
+          <aside className="hidden overflow-y-auto bg-[#1e1f22] p-3 md:block">
+            <Link to="/chat-servers" aria-label="Browse servers" className="cursor-target grid h-12 w-12 place-items-center rounded-2xl bg-[#5865f2] text-white shadow-lg shadow-black/30 transition hover:rounded-[18px]"><ArrowLeft size={20}/></Link>
             <div className="my-3 h-px bg-white/10" />
             <div className="space-y-2">
               {servers.slice(0, 14).map((item) => (
-                <Link key={item.id} to={`/chat-servers/${item.id}`} title={safeText(item.name, "Server")} className={`cursor-target grid h-12 w-12 place-items-center overflow-hidden text-sm font-black transition-all duration-200 hover:rounded-2xl ${item.id === server.id ? "rounded-2xl bg-[#5865f2] text-white" : "rounded-full bg-[#2b2d31] text-white/80 hover:bg-[#5865f2]"}`}>{item.iconUrl ? <img src={item.iconUrl} alt="" className="h-full w-full object-cover"/> : initial(item.name)}</Link>
+                <Link key={item.id} to={`/chat-servers/${item.id}`} title={safeText(item.name, "Server")} className={`cursor-target group relative grid h-12 w-12 place-items-center overflow-hidden text-sm font-black transition-all duration-200 hover:rounded-2xl ${item.id === server.id ? "rounded-2xl bg-[#5865f2] text-white" : "rounded-full bg-[#313338] text-white/80 hover:rounded-2xl hover:bg-[#5865f2]"}`}><span className={`absolute -left-3 top-1/2 w-2 -translate-y-1/2 rounded-r bg-white transition-all ${item.id === server.id ? "h-10" : "h-0 group-hover:h-5"}`}/>{item.iconUrl ? <img src={item.iconUrl} alt="" className="h-full w-full object-cover"/> : initial(item.name)}</Link>
               ))}
             </div>
           </aside>
-          <aside className="border-b border-black/40 bg-[#2b2d31] lg:border-b-0 lg:border-r">
-            <div className="border-b border-black/40 px-3 py-3 shadow-sm shadow-black/20">
+          <aside className="flex min-h-0 flex-col border-r border-black/40 bg-[#2b2d31]">
+            <div className="relative border-b border-black/40 shadow-sm shadow-black/20">
+              <div className="h-[84px] bg-[#1e1f22] bg-cover bg-center" style={{ backgroundImage: server.bannerUrl ? `linear-gradient(rgba(0,0,0,.15), rgba(0,0,0,.45)), url(${JSON.stringify(server.bannerUrl)})` : "linear-gradient(135deg, #5865f2, #1e1f22)" }} />
               <div className="flex items-center gap-3">
-                <Link to="/chat-servers" aria-label="Back to servers" className="cursor-target grid h-8 w-8 shrink-0 place-items-center rounded-lg text-white/45 hover:bg-white/10 hover:text-white"><ArrowLeft size={15}/></Link>
-                {server.iconUrl ? <img src={server.iconUrl} alt="" className="h-9 w-9 rounded-xl object-cover"/> : <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#5865f2]/20 font-mono text-sm font-black text-white">{initial(serverName)}</span>}
-                <div className="min-w-0"><p className="truncate text-sm font-bold text-white">{serverName}</p><p className="truncate text-[11px] text-white/35">by {ownerName}</p></div>
+                <Link to="/chat-servers" aria-label="Back to servers" className="cursor-target absolute left-2 top-2 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-black/35 text-white/70 hover:bg-black/60 hover:text-white"><ArrowLeft size={15}/></Link>
+                {server.iconUrl ? <img src={server.iconUrl} alt="" className="absolute left-3 top-12 h-14 w-14 rounded-2xl border-4 border-[#2b2d31] object-cover"/> : <span className="absolute left-3 top-12 grid h-14 w-14 shrink-0 place-items-center rounded-2xl border-4 border-[#2b2d31] bg-[#5865f2] font-mono text-xl font-black text-white">{initial(serverName)}</span>}
+              </div>
+              <div className="px-4 pb-3 pt-8">
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0"><p className="truncate text-sm font-bold text-white">{serverName}</p><p className="truncate text-[11px] text-white/35">by {ownerName}</p></div>
                 {canManage && <button type="button" onClick={() => setSettingsOpen((value) => !value)} className="ml-auto grid h-8 w-8 place-items-center rounded-lg text-white/45 hover:bg-white/10 hover:text-white"><Settings size={15}/></button>}
+                </div>
               </div>
             </div>
-            <div className="p-3">
+            <div className="min-h-0 flex-1 overflow-y-auto p-3">
               <p className="px-2 pb-2 text-xs font-bold uppercase tracking-wide text-white/35">Text channels</p>
               {textChannels.map((channel) => (
                 <button key={channel.id} type="button" onClick={() => setChannelId(channel.id)} className={`cursor-target flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-[15px] font-medium ${selectedChannel?.id === channel.id ? "bg-white/10 text-white" : "text-[#949ba4] hover:bg-white/[.06] hover:text-[#dbdee1]"}`}><Hash size={17}/>{channel.name}</button>
               ))}
-            </div>
-            <div className="border-t border-black/25 p-3">
+              <div className="my-3 h-px bg-black/30" />
               <p className="px-2 pb-2 text-xs font-bold uppercase tracking-wide text-white/35">Voice channels</p>
               {voiceChannels.map((channel) => {
                 const fullId = `server-${server.id}-${channel.id}`;
                 const joined = voice.joinedChannelId === fullId;
                 return <button key={channel.id} type="button" onClick={() => void joinVoice(channel)} className={`cursor-target flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-[15px] font-medium ${joined ? "bg-emerald-400/10 text-emerald-200" : "text-[#949ba4] hover:bg-white/[.06] hover:text-[#dbdee1]"}`}><Volume2 size={17}/><span className="min-w-0 flex-1 truncate">{channel.name}</span>{joined && (voice.muted ? <MicOff size={14}/> : <Mic size={14}/>)}</button>;
               })}
+              {isBannedHere && <p className="mt-3 rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-200">You are banned from chatting in this server.</p>}
             </div>
-            {isBannedHere && <p className="m-3 rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-xs text-red-200">You are banned from chatting in this server.</p>}
+            <div className="border-t border-black/40 bg-[#232428] p-3">
+              <div className="flex items-center gap-2">{myProfile?.photoUrl ? <img src={myProfile.photoUrl} alt="" className="h-8 w-8 rounded-full object-cover"/> : <span className="grid h-8 w-8 place-items-center rounded-full bg-white/10 text-xs font-bold">{initial(myProfile?.displayName || user?.email, "U")}</span>}<div className="min-w-0 flex-1"><p className="truncate text-xs font-bold text-white">{safeText(myProfile?.displayName || user?.displayName, "You")}</p><p className="truncate text-[10px] text-white/35">{voice.joinedChannelId ? "Voice connected" : "Online"}</p></div>{voice.joinedChannelId && (voice.muted ? <MicOff size={14} className="text-red-300"/> : <Mic size={14} className="text-emerald-300"/>)}</div>
+            </div>
           </aside>
 
-          <main className="min-w-0 bg-[#313338]">
+          <main className="min-h-0 min-w-0 bg-[#313338]">
             {selectedChannel?.id === "rules" ? (
-              <div className="min-h-[700px]">
+              <div className="flex h-full min-h-0 flex-col">
                 <header className="flex h-[49px] items-center gap-2 border-b border-black/35 bg-[#313338] px-5 shadow-sm shadow-black/20"><ShieldCheck size={19} className="text-white/45"/><h2 className="font-bold text-white">rules</h2></header>
                 <div className="mx-auto max-w-2xl px-6 py-12"><span className="grid h-16 w-16 place-items-center rounded-full bg-brand-500/15 text-brand-200"><ShieldCheck size={30}/></span><h2 className="mt-5 text-2xl font-black text-white">Welcome to {serverName}</h2><p className="mt-2 text-sm leading-6 text-white/45">{serverDescription}</p><div className="mt-8 space-y-3">{serverRules.length ? serverRules.map((rule, index) => <div key={`${index}-${rule}`} className="flex gap-3 rounded-xl border border-white/[.07] bg-white/[.025] p-4"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand-500/15 font-mono text-xs font-black text-brand-200">{index + 1}</span><p className="pt-1 text-sm leading-5 text-white/70">{rule}</p></div>) : <p className="rounded-xl border border-white/[.07] bg-white/[.025] p-4 text-sm text-white/45">No rules posted yet.</p>}</div></div>
               </div>
@@ -273,7 +280,7 @@ export default function CommunityServer() {
             )}
           </main>
 
-          <aside className="hidden overflow-y-auto border-l border-black/40 bg-[#2b2d31] p-4 lg:block">
+          <aside className="hidden min-h-0 overflow-y-auto border-l border-black/40 bg-[#2b2d31] p-4 xl:block">
             <div><p className="text-xs font-bold uppercase tracking-wide text-white/35">About</p><p className="mt-3 text-sm leading-6 text-[#b5bac1]">{serverDescription}</p></div>
             <div className="mt-5 rounded-xl border border-white/[.07] bg-black/15 p-3"><button type="button" onClick={() => { void navigator.clipboard?.writeText(inviteUrl); setNotice("Invite link copied."); }} className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2 text-xs font-bold text-white hover:bg-brand-400"><Copy size={13}/>Copy invite</button><p className="mt-2 truncate text-center font-mono text-[10px] text-white/30">{inviteCode}</p></div>
             <div className="mt-5 rounded-xl border border-white/[.07] bg-black/15 p-3">
