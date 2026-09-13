@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Ban, Copy, Crown, Hash, Mic, MicOff, Plus, Server, Settings, ShieldCheck, UserMinus, Users, Volume2, X } from "lucide-react";
+import { ArrowLeft, Ban, Copy, Crown, Globe2, Hash, Lock, Mic, MicOff, Plus, Server, Settings, ShieldCheck, UserMinus, Users, Volume2, X } from "lucide-react";
 import CommunityServerChat from "../components/CommunityServerChat";
 import ProfileCard from "../components/ProfileCard";
 import StatusDot from "../components/StatusDot";
@@ -63,10 +63,23 @@ export default function CommunityServer() {
   const [banLookup, setBanLookup] = useState("");
   const [notice, setNotice] = useState("");
 
-  useEffect(() => subscribeToCommunityChatServers((items) => { setServers(items); setReady(true); }), []);
-  useEffect(() => subscribeToServers(setMinecraftServers), []);
-  useEffect(() => subscribeToAllProfiles(setProfiles), []);
-  useEffect(() => user ? subscribeToProfile(user.uid, setMyProfile) : undefined, [user]);
+  useEffect(() => {
+    const unsubscribe = subscribeToCommunityChatServers((items) => { setServers(items); setReady(true); });
+    return typeof unsubscribe === "function" ? unsubscribe : undefined;
+  }, []);
+  useEffect(() => {
+    const unsubscribe = subscribeToServers(setMinecraftServers);
+    return typeof unsubscribe === "function" ? unsubscribe : undefined;
+  }, []);
+  useEffect(() => {
+    const unsubscribe = subscribeToAllProfiles(setProfiles);
+    return typeof unsubscribe === "function" ? unsubscribe : undefined;
+  }, []);
+  useEffect(() => {
+    if (!user) return undefined;
+    const unsubscribe = subscribeToProfile(user.uid, setMyProfile);
+    return typeof unsubscribe === "function" ? unsubscribe : undefined;
+  }, [user]);
 
   const server = useMemo(() => servers.find((item) => item.id === serverId) ?? null, [serverId, servers]);
   const isStaff = isStaffRole(role);
@@ -88,7 +101,7 @@ export default function CommunityServer() {
   const members = useMemo(() => memberIds.map((id) => profiles.find((profile) => profile.id === id)).filter((item): item is UserProfile => !!item), [memberIds, profiles]);
   const onlineMembers = useMemo(() => members.filter(isOnline).sort((a, b) => b.lastActiveAt - a.lastActiveAt), [members]);
   const isBannedHere = !!user && (!!server?.bannedUserIds?.includes(user.uid) || [myProfile?.displayName, myProfile?.username].filter(Boolean).some((name) => bannedNames.map((item) => item.toLowerCase()).includes(String(name).toLowerCase())));
-  const inviteUrl = typeof window === "undefined" || !server ? "" : `${window.location.origin}/chat-servers/${server.id}?invite=${inviteCode}`;
+  const inviteUrl = typeof window === "undefined" || !server ? "" : `${window.location.origin}/invite/${inviteCode}${myProfile ? `?from=${encodeURIComponent(safeText(myProfile.displayName, ""))}` : ""}`;
   const linkedMinecraftServer = useMemo(() => minecraftServers.find((item) => item.id === server?.linkedMinecraftServerId) ?? null, [minecraftServers, server?.linkedMinecraftServerId]);
   const linkedMinecraftCode = useMemo(() => (linkedMinecraftServer?.code ?? []).map(getIcon), [linkedMinecraftServer?.code]);
   const linkedMinecraftCodeText = linkedMinecraftCode.map((icon) => icon.label).join(" • ");
@@ -116,6 +129,12 @@ export default function CommunityServer() {
     if (!server || !canManage) return;
     await updateCommunityChatServer(server.id, { bannerUrl: bannerUrl.trim().slice(0, 1000), iconUrl: iconUrl.trim().slice(0, 1000) });
     setNotice("Server look saved.");
+  }
+
+  async function setVisibility(isPublic: boolean) {
+    if (!server || !canManage) return;
+    await updateCommunityChatServer(server.id, { isPublic });
+    setNotice(isPublic ? "Server is now public — listed in Join a server." : "Server is now private — invite link only.");
   }
 
   async function saveMinecraftLink() {
@@ -213,7 +232,7 @@ export default function CommunityServer() {
             <div className="my-3 h-px bg-white/10" />
             <div className="space-y-2">
               {servers.slice(0, 14).map((item) => (
-                <Link key={item.id} to={`/chat-servers/${item.id}`} title={safeText(item.name, "Server")} className={`cursor-target grid h-12 w-12 place-items-center overflow-hidden rounded-[24px] text-sm font-black transition-all hover:rounded-2xl ${item.id === server.id ? "rounded-2xl bg-[#5865f2] text-white" : "bg-[#2b2d31] text-white/80 hover:bg-[#5865f2]"}`}>{item.iconUrl ? <img src={item.iconUrl} alt="" className="h-full w-full object-cover"/> : initial(item.name)}</Link>
+                <Link key={item.id} to={`/chat-servers/${item.id}`} title={safeText(item.name, "Server")} className={`cursor-target grid h-12 w-12 place-items-center overflow-hidden text-sm font-black transition-all duration-200 hover:rounded-2xl ${item.id === server.id ? "rounded-2xl bg-[#5865f2] text-white" : "rounded-full bg-[#2b2d31] text-white/80 hover:bg-[#5865f2]"}`}>{item.iconUrl ? <img src={item.iconUrl} alt="" className="h-full w-full object-cover"/> : initial(item.name)}</Link>
               ))}
             </div>
           </aside>
@@ -287,7 +306,27 @@ export default function CommunityServer() {
           <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-white/10 bg-[#11151d] p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-center justify-between"><h2 className="text-lg font-bold text-white">Server settings</h2><button type="button" onClick={() => setSettingsOpen(false)} className="rounded-lg p-2 text-white/45 hover:bg-white/10 hover:text-white"><X size={16}/></button></div>
             <div className="mt-5 grid gap-4 md:grid-cols-2">
-              <section className="rounded-xl border border-white/8 bg-black/15 p-4"><h3 className="font-bold text-white">Look</h3><input value={iconUrl} onChange={(event) => setIconUrl(event.target.value)} placeholder="Icon image URL" className="mt-3 w-full rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none"/><input value={bannerUrl} onChange={(event) => setBannerUrl(event.target.value)} placeholder="Banner image URL" className="mt-2 w-full rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none"/><button type="button" onClick={() => void saveAppearance()} className="mt-3 rounded-lg bg-brand-500 px-3 py-2 text-xs font-bold text-white">Save look</button></section>
+              <section className="rounded-xl border border-white/8 bg-black/15 p-4">
+                <h3 className="font-bold text-white">Look</h3>
+                <p className="mt-1 text-xs leading-5 text-white/35">Paste an image or GIF link — it'll animate automatically.</p>
+                <div className="mt-3 flex items-center gap-3">
+                  <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-full bg-[#1e1f22] text-sm font-black text-white">{iconUrl ? <img src={iconUrl} alt="" className="h-full w-full object-cover"/> : initial(serverName)}</span>
+                  <input value={iconUrl} onChange={(event) => setIconUrl(event.target.value)} placeholder="Icon image or GIF URL" className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none"/>
+                </div>
+                <div className="mt-3">
+                  <div className="aspect-[3/1] w-full overflow-hidden rounded-lg bg-[#1e1f22]">{bannerUrl && <img src={bannerUrl} alt="" className="h-full w-full object-cover"/>}</div>
+                  <input value={bannerUrl} onChange={(event) => setBannerUrl(event.target.value)} placeholder="Banner image or GIF URL" className="mt-2 w-full rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none"/>
+                </div>
+                <button type="button" onClick={() => void saveAppearance()} className="mt-3 rounded-lg bg-brand-500 px-3 py-2 text-xs font-bold text-white">Save look</button>
+              </section>
+              <section className="rounded-xl border border-white/8 bg-black/15 p-4">
+                <h3 className="font-bold text-white">Visibility</h3>
+                <p className="mt-1 text-xs leading-5 text-white/35">Public servers show up in Join a server. Private servers only join through an invite link.</p>
+                <div className="mt-3 flex gap-2">
+                  <button type="button" onClick={() => void setVisibility(true)} className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold ${server.isPublic !== false ? "bg-brand-500 text-white" : "bg-white/10 text-white/50 hover:bg-white/15"}`}><Globe2 size={13}/>Public</button>
+                  <button type="button" onClick={() => void setVisibility(false)} className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold ${server.isPublic === false ? "bg-brand-500 text-white" : "bg-white/10 text-white/50 hover:bg-white/15"}`}><Lock size={13}/>Private</button>
+                </div>
+              </section>
               <section className="rounded-xl border border-white/8 bg-black/15 p-4"><h3 className="font-bold text-white">Minecraft link</h3><p className="mt-1 text-xs leading-5 text-white/35">When the linked Minecraft server is online, this chat server shows its MC Edu join-code icons.</p><select value={linkedMinecraftServerId} onChange={(event) => setLinkedMinecraftServerId(event.target.value)} className="mt-3 w-full rounded-lg border border-white/10 bg-[#11151d] px-3 py-2 text-sm text-white outline-none"><option value="">No linked Minecraft server</option>{minecraftServers.map((item) => <option key={item.id} value={item.id}>{item.name} {item.isOnline ? "· online" : "· offline"}</option>)}</select><button type="button" onClick={() => void saveMinecraftLink()} className="mt-3 rounded-lg bg-brand-500 px-3 py-2 text-xs font-bold text-white">Save link</button></section>
               <section className="rounded-xl border border-white/8 bg-black/15 p-4"><h3 className="font-bold text-white">Invite / ban</h3><div className="mt-3 flex gap-2"><input value={memberLookup} onChange={(event) => setMemberLookup(event.target.value)} placeholder="@username to invite" className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none"/><button type="button" onClick={() => void inviteMember()} className="rounded-lg bg-emerald-500 px-3 py-2 text-xs font-bold text-white">Invite</button></div><div className="mt-2 flex gap-2"><input value={banLookup} onChange={(event) => setBanLookup(event.target.value)} placeholder="@username to ban" className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none"/><button type="button" onClick={() => void banMember()} className="rounded-lg bg-red-500 px-3 py-2 text-xs font-bold text-white">Ban</button></div></section>
               <section className="rounded-xl border border-white/8 bg-black/15 p-4"><h3 className="font-bold text-white">Channels</h3><div className="mt-3 flex gap-2"><input value={newTextChannel} onChange={(event) => setNewTextChannel(event.target.value)} placeholder="new text channel" className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none"/><button type="button" onClick={() => void addTextChannel()} className="grid h-10 w-10 place-items-center rounded-lg bg-white/10 text-white"><Plus size={15}/></button></div><div className="mt-2 flex gap-2"><input value={newVoiceChannel} onChange={(event) => setNewVoiceChannel(event.target.value)} placeholder="new voice channel" className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none"/><button type="button" onClick={() => void addVoiceChannel()} className="grid h-10 w-10 place-items-center rounded-lg bg-white/10 text-white"><Plus size={15}/></button></div></section>
