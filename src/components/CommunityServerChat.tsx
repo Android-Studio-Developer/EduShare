@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Bell, BellOff, CheckCheck, Clock3, Hash, Reply, Send, Trash2, Wifi, WifiOff, X } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { checkLocalProfanity, formatBanRemaining, getChatBanRemaining, screenChatMessageRemote } from "../lib/aiModeration";
-import { deleteCommunityChatMessage, sendCommunityBotMessage, sendCommunityChatMessage, subscribeToCommunityChatMessages } from "../lib/communityChatServers";
+import { clearTyping, deleteCommunityChatMessage, sendCommunityBotMessage, sendCommunityChatMessage, setTyping, subscribeToCommunityChatMessages, subscribeToTyping } from "../lib/communityChatServers";
 import { isOnline, subscribeToAllProfiles, subscribeToProfile } from "../lib/profiles";
 import { subscribeToGuilds } from "../lib/guilds";
 import { createNotification } from "../lib/notifications";
@@ -15,9 +15,13 @@ import RankBadge from "./RankBadge";
 import GuildTag from "./GuildTag";
 import MentionInput from "./MentionInput";
 import { recordDeveloperBotEvent, subscribeToDeveloperBots, verifyWithDeveloperBot } from "../lib/developers";
-import { renderDeveloperBotCommand } from "../lib/eduScript";
+import { renderDeveloperBotCommand, renderDeveloperBotPanel } from "../lib/eduScript";
 import { getCommunityNotificationLevels } from "../lib/communityServerPreferences";
+import { redeemCosmeticCode } from "../lib/redeemCodes";
+import { cosmeticById, purchaseCosmetic } from "../lib/cosmetics";
 import type { DeveloperBot } from "../types";
+import BotMessagePanel from "./BotMessagePanel";
+import { applyBasicChatCommand, BASIC_CHAT_COMMANDS, type ChatSlashCommand } from "../lib/chatCommands";
 
 function timeAgo(ts: number) {
   const seconds = Math.floor((Date.now() - ts) / 1000);
@@ -47,6 +51,15 @@ function publicEmojiPool(profiles: UserProfile[], authorId: string) {
   return byName;
 }
 
+const URL_SPLIT_RE = /(https?:\/\/[^\s<]+[^\s<.,;:!?'")\]])/gi;
+const URL_TEST_RE = /^https?:\/\//i;
+
+function linkify(text: string, keyPrefix: string) {
+  return text.split(URL_SPLIT_RE).map((part, index) => URL_TEST_RE.test(part)
+    ? <a key={`${keyPrefix}-url-${index}`} href={part} target="_blank" rel="noopener noreferrer" className="break-all text-brand-300 underline hover:text-brand-200">{part}</a>
+    : part);
+}
+
 function renderEmojiText(text: string, emojis: Map<string, CustomEmoji>) {
   const safeText = text ?? "";
   const exact = safeText.trim().match(/^:([a-z0-9_]{1,20}):$/i);
@@ -55,18 +68,20 @@ function renderEmojiText(text: string, emojis: Map<string, CustomEmoji>) {
   return safeText.split(EMOJI_RE).map((part, index) => {
     const match = part.match(/^:([a-z0-9_]{1,20}):$/i);
     const emoji = match ? emojis.get(match[1].toLowerCase()) : undefined;
-    return emoji ? <img key={`${emoji.id}-${index}`} src={emoji.url} alt={`:${emoji.name}:`} title={`:${emoji.name}:`} className="mx-0.5 inline-block h-8 w-8 align-middle object-contain"/> : part;
+    return emoji ? <img key={`${emoji.id}-${index}`} src={emoji.url} alt={`:${emoji.name}:`} title={`:${emoji.name}:`} className="mx-0.5 inline-block h-8 w-8 align-middle object-contain"/> : linkify(part, String(index));
   });
 }
 
-const PING_RE = /(@(?:everyone|here|admins|mods|owner)\b)/gi;
-const PING_EXACT_RE = /^@(everyone|here|admins|mods|owner)$/i;
+const PING_RE = /(@[\w.]{1,32})/gi;
+const PING_EXACT_RE = /^@[\w.]{1,32}$/i;
 
 function renderMessageText(text: string, emojis: Map<string, CustomEmoji>) {
   const safeText = text ?? "";
-  return safeText.split(PING_RE).map((part, index) => PING_EXACT_RE.test(part)
-    ? <span key={`ping-${index}`} className="mx-0.5 rounded bg-brand-500/20 px-1 py-0.5 font-semibold text-brand-200">{part}</span>
-    : <span key={`seg-${index}`}>{renderEmojiText(part, emojis)}</span>);
+  return safeText.split(/(\|\|[^|]+\|\|)/g).map((section, sectionIndex) => section.startsWith("||") && section.endsWith("||")
+    ? <button key={`spoiler-${sectionIndex}`} type="button" title="Click to reveal spoiler" className="rounded bg-black/70 px-1 text-transparent hover:bg-black/35 hover:text-white focus:text-white">{section.slice(2, -2)}</button>
+    : section.split(PING_RE).map((part, index) => PING_EXACT_RE.test(part)
+      ? <span key={`ping-${sectionIndex}-${index}`} className="mx-0.5 rounded bg-brand-500/20 px-1 py-0.5 font-semibold text-brand-200">{part}</span>
+      : <span key={`seg-${sectionIndex}-${index}`}>{renderEmojiText(part, emojis)}</span>));
 }
 
 function resolvePingRecipients(value: string, server: CommunityChatServer, profiles: UserProfile[], senderId: string) {
@@ -80,6 +95,12 @@ function resolvePingRecipients(value: string, server: CommunityChatServer, profi
   if (/@admins\b/.test(lower)) { memberIds.filter((id) => roleOf(id) === "admin").forEach((id) => ids.add(id)); labels.push("admins"); }
   if (/@mods\b/.test(lower)) { memberIds.filter((id) => roleOf(id) === "mod").forEach((id) => ids.add(id)); labels.push("mods"); }
   if (/@owner\b/.test(lower)) { ids.add(server.ownerId); labels.push("owner"); }
+  for (const match of value.matchAll(/(?:^|\s)@([\w.]{1,32})/gi)) {
+    const handle = match[1].toLowerCase();
+    if (["everyone", "here", "admins", "mods", "owner"].includes(handle)) continue;
+    const member = profiles.find((item) => memberIds.includes(item.id) && [item.usernameLower, item.username, item.displayName.replace(/\s+/g, "")].filter(Boolean).some((name) => safeText(name).toLowerCase() === handle));
+    if (member) { ids.add(member.id); labels.push(member.usernameLower || member.username || member.displayName.replace(/\s+/g, "")); }
+  }
   ids.delete(senderId);
   return { ids: [...ids].slice(0, 50), labels };
 }
@@ -103,7 +124,10 @@ export default function CommunityServerChat({ server, embedded = false, channelI
   const [replyPing, setReplyPing] = useState(true);
   const [openProfileId, setOpenProfileId] = useState<string | null>(null);
   const [chatStatus, setChatStatus] = useState<"online" | "reconnecting" | "offline">(navigator.onLine ? "online" : "offline");
+  const [typingUsers, setTypingUsers] = useState<{ userId: string; name: string }[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+  const lastTypingSentRef = useRef(0);
 
   useEffect(() => {
     const online = () => setChatStatus("online");
@@ -127,19 +151,48 @@ export default function CommunityServerChat({ server, embedded = false, channelI
   }, []);
   useEffect(() => subscribeToDeveloperBots(setDeveloperBots), []);
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    if (stickToBottomRef.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages.length]);
+  useEffect(() => {
+    const unsubscribe = subscribeToTyping(server.id, channelId, setTypingUsers);
+    return () => {
+      unsubscribe();
+      if (user) void clearTyping(server.id, channelId, user.uid);
+    };
+  }, [server.id, channelId, user]);
+  const otherTypers = useMemo(() => typingUsers.filter((item) => item.userId !== user?.uid), [typingUsers, user]);
+
+  function handleTextChange(value: string) {
+    setText(value);
+    if (!user || !profile) return;
+    if (!value.trim()) { void clearTyping(server.id, channelId, user.uid); return; }
+    const now = Date.now();
+    if (now - lastTypingSentRef.current > 2_500) {
+      lastTypingSentRef.current = now;
+      void setTyping(server.id, channelId, user.uid, safeText(profile.displayName, "Member"));
+    }
+  }
   const guildByProfileId = useMemo(() => {
     const guildById = new Map(guilds.map((guild) => [guild.id, guild]));
     return new Map(profiles.map((item) => [item.id, item.guildId ? guildById.get(item.guildId) : undefined]));
   }, [guilds, profiles]);
   const roomName = safeText(embedded ? channelName : server.name, "general");
+  const slashCommands = useMemo<ChatSlashCommand[]>(() => [
+    ...BASIC_CHAT_COMMANDS,
+    ...developerBots.filter((bot) => bot.enabled && server.botIds?.includes(bot.id)).flatMap((bot) => bot.commands.map((command) => ({ name: `${bot.handle} ${command.name}`, description: `Run ${bot.name}'s ${command.name} command.`, category: "Apps", insertText: `/${bot.handle} ${command.name} ` }))),
+  ], [developerBots, server.botIds]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const value = text.trim().slice(0, 300);
+    let value = text.trim().slice(0, 300);
     if (!user || !profile || !value) return;
     setNotice("");
+    const basicCommand = applyBasicChatCommand(value);
+    if (basicCommand && "settings" in basicCommand) { setNotice("Notification settings are in the bell menu at the top of this server."); return; }
+    if (basicCommand && "text" in basicCommand) {
+      if (!basicCommand.text) { setNotice("That command needs a message after it."); return; }
+      value = basicCommand.text.slice(0, 300);
+    }
     const profileNames = [profile.displayName, profile.username].filter(Boolean).map((item) => safeText(item).toLowerCase());
     const serverBans = (server.bannedUsernames ?? []).map((item) => item.toLowerCase());
     if ((server.bannedUserIds ?? []).includes(user.uid) || profileNames.some((name) => serverBans.includes(name))) {
@@ -159,8 +212,10 @@ export default function CommunityServerChat({ server, embedded = false, channelI
       const installedBot = botMatch ? developerBots.find((bot) => bot.enabled && server.botIds?.includes(bot.id) && bot.handle.toLowerCase() === botMatch[1].toLowerCase()) : undefined;
       const botCommand = installedBot && botMatch ? installedBot.commands.find((item) => item.name.toLowerCase() === botMatch[2].toLowerCase()) : undefined;
       const sendPromise = sendCommunityChatMessage(server.id, user.uid, safeText(profile.displayName, "Member"), profile.rank, profile.photoUrl || "", value, replyTo ? { id: replyTo.id, authorId: replyTo.authorId, author: safeText(replyTo.authorName, "Member"), text: safeText(replyTo.text), ping: replyPing } : undefined, channelId);
+      stickToBottomRef.current = true;
       const queuedNotice = window.setTimeout(() => setNotice("Message queued — reconnecting to chat…"), 4_000);
       setText("");
+      void clearTyping(server.id, channelId, user.uid);
       setReplyTo(null);
       setReplyPing(true);
       void sendPromise.then((sent) => {
@@ -184,11 +239,35 @@ export default function CommunityServerChat({ server, embedded = false, channelI
         if (installedBot) {
           const startedAt = Date.now();
           const args = botMatch?.[3] ?? "";
-          const reply = botCommand ? renderDeveloperBotCommand(botCommand, safeText(profile.displayName, "Member"), args) : `Unknown command. Try: ${installedBot.commands.map((item) => item.name).join(", ")}`;
-          if (botCommand?.action === "verify" && installedBot.verificationEnabled) void verifyWithDeveloperBot(installedBot.id, user.uid).catch(() => undefined);
-          void sendCommunityBotMessage(server.id, user.uid, installedBot, reply, channelId)
-            .then(() => recordDeveloperBotEvent(installedBot.id, { command: botMatch?.[2] ?? "unknown", invokedById: user.uid, invokedByName: safeText(profile.displayName, "Member"), status: botCommand ? "success" : "unknown_command", latencyMs: Date.now() - startedAt }))
-            .catch(() => undefined);
+          const commandName = botMatch?.[2] ?? "unknown";
+          const logEvent = (status: "success" | "failed" | "unknown_command") =>
+            recordDeveloperBotEvent(installedBot.id, { command: commandName, invokedById: user.uid, invokedByName: safeText(profile.displayName, "Member"), status, latencyMs: Date.now() - startedAt }).catch(() => undefined);
+
+          if (botCommand?.action === "redeem") {
+            void redeemCosmeticCode(args.trim())
+              .then((result) => sendCommunityBotMessage(server.id, user.uid, installedBot, `Redeemed! You unlocked ${result.cosmeticLabel}.`, channelId).then(() => logEvent("success")))
+              .catch((error) => {
+                const message = error instanceof Error ? error.message.replace(/^\w+\/[\w-]+:\s*/, "") : "That code didn't work.";
+                void sendCommunityBotMessage(server.id, user.uid, installedBot, message, channelId).then(() => logEvent("failed"));
+              });
+          } else if (botCommand?.action === "buy") {
+            const item = botCommand.cosmeticId ? cosmeticById(botCommand.cosmeticId) : undefined;
+            if (!item) {
+              void sendCommunityBotMessage(server.id, user.uid, installedBot, "This shop command isn't set up with an item yet.", channelId).then(() => logEvent("failed"));
+            } else {
+              void purchaseCosmetic(user.uid, item.id)
+                .then(() => sendCommunityBotMessage(server.id, user.uid, installedBot, `Bought ${item.label} for ${item.cost}cr — check your profile cosmetics.`, channelId).then(() => logEvent("success")))
+                .catch((error) => {
+                  const message = error instanceof Error ? error.message : "Purchase failed.";
+                  void sendCommunityBotMessage(server.id, user.uid, installedBot, message, channelId).then(() => logEvent("failed"));
+                });
+            }
+          } else {
+            const reply = botCommand ? renderDeveloperBotCommand(botCommand, safeText(profile.displayName, "Member"), args) : `Unknown command. Try: ${installedBot.commands.map((item) => item.name).join(", ")}`;
+            const panel = botCommand ? renderDeveloperBotPanel(botCommand, safeText(profile.displayName, "Member"), args) : undefined;
+            if (botCommand?.action === "verify" && installedBot.verificationEnabled && panel?.button?.action !== "verify") void verifyWithDeveloperBot(installedBot.id, user.uid).catch(() => undefined);
+            void sendCommunityBotMessage(server.id, user.uid, installedBot, reply, channelId, panel).then(() => logEvent(botCommand ? "success" : "unknown_command"));
+          }
         }
         void screenChatMessageRemote(user.uid, value, user.email).then((result) => {
           if (result.spam) void deleteCommunityChatMessage(server.id, sent.id, channelId);
@@ -212,17 +291,36 @@ export default function CommunityServerChat({ server, embedded = false, channelI
         <Hash size={22} className="shrink-0 text-[#80848e]" />
         <div className="min-w-0 flex-1"><h2 className="truncate text-base font-bold text-white">{roomName}</h2></div><span className={`ml-auto flex items-center gap-1 rounded px-2 py-1 text-[10px] ${chatStatus === "online" ? "text-emerald-300/80" : chatStatus === "reconnecting" ? "text-amber-300/80" : "text-red-300/80"}`}>{chatStatus === "online" ? <Wifi size={11}/> : <WifiOff size={11}/>} {chatStatus}</span>
       </header>
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-1 overflow-y-auto px-4 py-3">
-        {messages.length === 0 && <div className="grid min-h-80 place-items-center text-center"><div><Hash size={32} className="mx-auto text-white/15"/><p className="mt-3 text-sm font-semibold text-white/55">Start the conversation</p><p className="mt-1 text-xs text-white/30">This is the beginning of #{roomName}.</p></div></div>}
-        {messages.map((message) => {
+      <div ref={scrollRef} onScroll={(event) => { const target = event.currentTarget; stickToBottomRef.current = target.scrollHeight - target.scrollTop - target.clientHeight < 72; }} className="flex min-h-0 flex-1 flex-col justify-end space-y-1 overflow-y-auto px-4 py-3">
+        {messages.length === 0 && <div className="grid h-full min-h-80 place-items-center text-center"><div><Hash size={32} className="mx-auto text-white/15"/><p className="mt-3 text-sm font-semibold text-white/55">Start the conversation</p><p className="mt-1 text-xs text-white/30">This is the beginning of #{roomName}.</p></div></div>}
+        {messages.map((message, index) => {
           const authorName = safeText(message.authorName, "Member");
           const messageText = safeText(message.text);
+          const previous = messages[index - 1];
+          const grouped = !!previous && previous.authorId === message.authorId && !message.replyToId && message.createdAt - previous.createdAt < 5 * 60_000;
           return (
-          <div key={message.id} id={`community-message-${message.id}`} className="group flex items-start gap-3 px-2 py-1.5 hover:bg-black/[.08]">
-            <button type="button" disabled={message.isBot} onClick={() => !message.isBot && setOpenProfileId(message.authorId)} className="cursor-target shrink-0 disabled:cursor-default">
-              {message.authorPhotoUrl ? <img src={message.authorPhotoUrl} alt="" className="h-9 w-9 rounded-full object-cover"/> : <span className="grid h-9 w-9 place-items-center rounded-full bg-brand-500/15 font-bold text-brand-300">{initial(authorName)}</span>}
-            </button>
-            <div className="min-w-0 flex-1">{message.replyToId && <button type="button" onClick={() => document.getElementById(`community-message-${message.replyToId}`)?.scrollIntoView({ behavior: "smooth", block: "center" })} className="cursor-target mb-1 flex max-w-full items-center gap-1.5 text-left text-[10px] text-white/35 hover:text-white/55"><Reply size={10}/><span className="shrink-0 font-semibold text-brand-300/70">{safeText(message.replyToAuthor, "Member")}</span><span className="truncate">{safeText(message.replyToText)}</span>{message.replyPing === false && <BellOff size={9}/>}</button>}<div className="flex flex-wrap items-center gap-1.5"><button type="button" disabled={message.isBot} onClick={() => !message.isBot && setOpenProfileId(message.authorId)} className={`cursor-target truncate text-sm font-semibold disabled:cursor-default ${message.isBot ? "text-indigo-300" : rankNameClass(message.authorRank)}`}>{authorName}</button>{message.isBot && <span className="rounded bg-[#5865f2] px-1.5 py-0.5 text-[9px] font-black text-white">APP</span>}<GuildTag tag={guildByProfileId.get(message.authorId)?.tag} icon={guildByProfileId.get(message.authorId)?.tagIcon} font={guildByProfileId.get(message.authorId)?.tagFont} imageUrl={guildByProfileId.get(message.authorId)?.tagImageUrl} color={guildByProfileId.get(message.authorId)?.tagColor}/>{!message.isBot && <RankBadge rank={message.authorRank}/>}<span className="text-[10px] text-white/25">{timeAgo(message.createdAt)}</span>{message.deliveryState === "sending" ? <Clock3 size={10} className="text-amber-300/60"/> : message.authorId === user?.uid ? <CheckCheck size={10} className="text-emerald-300/45"/> : null}</div><p className="mt-0.5 break-words text-sm text-white/72 [overflow-wrap:anywhere]">{renderMessageText(messageText, publicEmojiPool(profiles, message.authorId))}</p></div>
+          <div key={message.id} id={`community-message-${message.id}`} className={`group flex items-start gap-3 px-2 hover:bg-black/[.08] ${grouped ? "py-px" : "py-1.5"}`}>
+            {grouped ? (
+              <span className="grid w-9 shrink-0 place-items-center text-[10px] text-white/0 group-hover:text-white/25">{new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+            ) : (
+              <button type="button" disabled={message.isBot} onClick={() => !message.isBot && setOpenProfileId(message.authorId)} className="cursor-target shrink-0 disabled:cursor-default">
+                {message.authorPhotoUrl ? <img src={message.authorPhotoUrl} alt="" className="h-9 w-9 rounded-full object-cover"/> : <span className="grid h-9 w-9 place-items-center rounded-full bg-brand-500/15 font-bold text-brand-300">{initial(authorName)}</span>}
+              </button>
+            )}
+            <div className="min-w-0 flex-1">
+              {message.replyToId && <button type="button" onClick={() => document.getElementById(`community-message-${message.replyToId}`)?.scrollIntoView({ behavior: "smooth", block: "center" })} className="cursor-target mb-1 flex max-w-full items-center gap-1.5 text-left text-[10px] text-white/35 hover:text-white/55"><Reply size={10}/><span className="shrink-0 font-semibold text-brand-300/70">{safeText(message.replyToAuthor, "Member")}</span><span className="truncate">{safeText(message.replyToText)}</span>{message.replyPing === false && <BellOff size={9}/>}</button>}
+              {!grouped && <div className="flex flex-wrap items-center gap-1.5"><button type="button" disabled={message.isBot} onClick={() => !message.isBot && setOpenProfileId(message.authorId)} className={`cursor-target truncate text-sm font-semibold disabled:cursor-default ${message.isBot ? "text-indigo-300" : rankNameClass(message.authorRank)}`}>{authorName}</button>{message.isBot && <span className="rounded bg-[#5865f2] px-1.5 py-0.5 text-[9px] font-black text-white">APP</span>}<GuildTag tag={guildByProfileId.get(message.authorId)?.tag} icon={guildByProfileId.get(message.authorId)?.tagIcon} font={guildByProfileId.get(message.authorId)?.tagFont} imageUrl={guildByProfileId.get(message.authorId)?.tagImageUrl} color={guildByProfileId.get(message.authorId)?.tagColor}/>{!message.isBot && <RankBadge rank={message.authorRank}/>}<span className="text-[10px] text-white/25">{timeAgo(message.createdAt)}</span>{message.deliveryState === "sending" ? <Clock3 size={10} className="text-amber-300/60"/> : message.authorId === user?.uid ? <CheckCheck size={10} className="text-emerald-300/45"/> : null}</div>}
+              {!message.botPanel && <p className={`break-words text-sm text-white/72 [overflow-wrap:anywhere] ${grouped ? "" : "mt-0.5"}`}>{renderMessageText(messageText, publicEmojiPool(profiles, message.authorId))}</p>}
+              {message.botPanel && (
+                <BotMessagePanel
+                  panel={message.botPanel}
+                  onVerify={message.botId && user ? async () => {
+                    await verifyWithDeveloperBot(message.botId!, user.uid);
+                    setNotice(`Verified with ${authorName}.`);
+                  } : undefined}
+                />
+              )}
+            </div>
             <button type="button" onClick={() => { setReplyTo(message); setReplyPing(true); }} aria-label={`Reply to ${authorName}`} className="cursor-target rounded p-1.5 text-white/25 opacity-0 hover:bg-white/10 hover:text-[#dbdee1] group-hover:opacity-100"><Reply size={13}/></button>
             {(user?.uid === message.authorId || user?.uid === server.ownerId || isStaffRole(role)) && <button type="button" onClick={() => void deleteCommunityChatMessage(server.id, message.id, channelId)} aria-label="Delete message" className="cursor-target opacity-0 rounded p-1.5 text-white/25 hover:bg-red-500/10 hover:text-red-300 group-hover:opacity-100"><Trash2 size={13}/></button>}
           </div>
@@ -230,7 +328,12 @@ export default function CommunityServerChat({ server, embedded = false, channelI
       </div>
       <form onSubmit={submit} className="px-4 pb-4 pt-2">
         {replyTo && <div className="mb-2 flex items-center gap-2 rounded-xl border border-brand-400/15 bg-brand-500/[.06] px-3 py-2 text-xs"><Reply size={13} className="text-brand-300"/><span className="min-w-0 flex-1 truncate text-white/55">Replying to <b className="text-white/80">{safeText(replyTo.authorName, "Member")}</b>: {safeText(replyTo.text)}</span><button type="button" role="switch" aria-checked={replyPing} onClick={() => setReplyPing((value) => !value)} className={`cursor-target flex shrink-0 items-center gap-1 rounded-lg border px-2 py-1 font-semibold ${replyPing ? "border-brand-400/35 bg-brand-500/15 text-brand-200" : "border-white/10 text-white/35"}`}>{replyPing ? <Bell size={11}/> : <BellOff size={11}/>} {replyPing ? "Ping on" : "Ping off"}</button><button type="button" onClick={() => { setReplyTo(null); setReplyPing(true); }} aria-label="Cancel reply" className="cursor-target p-1 text-white/35 hover:text-white"><X size={13}/></button></div>}
-        <div className="flex gap-2"><MentionInput value={text} onChange={setText} profiles={profiles} disabled={!user} maxLength={300} placeholder={user ? `Message #${roomName}` : "Log in to chat"} includeSpecial roles={[{ handle: "admins", label: "Admins" }, { handle: "mods", label: "Mods" }, { handle: "owner", label: "Owner" }]} className="w-full rounded-lg border-0 bg-[#383a40] px-4 py-3 text-sm text-white placeholder:text-[#949ba4] focus:outline-none"/><Button type="submit" disabled={!user || sending || !text.trim()} className="bg-[#5865f2] hover:bg-[#4752c4]"><Send size={15}/></Button></div>
+        <div className="mb-1 h-4 truncate text-[11px] italic text-white/35">
+          {otherTypers.length === 1 && `${otherTypers[0].name} is typing…`}
+          {otherTypers.length === 2 && `${otherTypers[0].name} and ${otherTypers[1].name} are typing…`}
+          {otherTypers.length > 2 && `${otherTypers[0].name} and ${otherTypers.length - 1} others are typing…`}
+        </div>
+        <div className="flex gap-2"><MentionInput value={text} onChange={handleTextChange} profiles={profiles.filter((item) => item.id === server.ownerId || server.memberIds?.includes(item.id))} disabled={!user} maxLength={300} placeholder={user ? `Message #${roomName}` : "Log in to chat"} includeSpecial roles={[{ handle: "admins", label: "Admins" }, { handle: "mods", label: "Mods" }, { handle: "owner", label: "Owner" }]} slashCommands={slashCommands} className="w-full rounded-lg border-0 bg-[#383a40] px-4 py-3 text-sm text-white placeholder:text-[#949ba4] focus:outline-none"/><Button type="submit" disabled={!user || sending || !text.trim()} className="bg-[#5865f2] hover:bg-[#4752c4]"><Send size={15}/></Button></div>
         {notice && <p className="chat-system-notice mt-2 text-xs text-amber-300">{notice}</p>}
       </form>
       {openProfileId && <ProfileCard userId={openProfileId} onClose={() => setOpenProfileId(null)}/>} 

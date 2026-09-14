@@ -17,7 +17,7 @@ import {
 import { db } from "./firebase";
 import { logActivity } from "./activity";
 import { deleteChatFile } from "./appwrite";
-import type { ChatMessage, Rank } from "../types";
+import type { ChatMessage, DeveloperBotPanel, Rank } from "../types";
 
 export function togglePublicReaction(messageId: string, emoji: string, uid: string, add: boolean) {
   return updateDoc(doc(db, "publicChat", messageId), { [`reactions.${emoji}`]: add ? arrayUnion(uid) : arrayRemove(uid) });
@@ -82,6 +82,7 @@ export async function sendPublicMessage(authorId: string, authorName: string, te
   replyTo?: { id: string; authorId: string; author: string; text: string; ping: boolean };
   poll?: { question: string; options: string[]; votes: Record<string, string[]> };
   youtubeId?: string;
+  botPanel?: DeveloperBotPanel;
 } = {}) {
   return addDoc(publicMessagesRef(), {
     text, authorId, authorName, authorRank, authorPhotoUrl: opts.authorPhotoUrl ?? "", isBot: !!opts.isBot, createdAt: Date.now(),
@@ -90,6 +91,7 @@ export async function sendPublicMessage(authorId: string, authorName: string, te
     ...(opts.poll ? { poll: opts.poll } : {}),
     ...(opts.youtubeId ? { youtubeId: opts.youtubeId } : {}),
     ...(opts.botId ? { botId: opts.botId, triggeredById: opts.triggeredById ?? authorId } : {}),
+    ...(opts.botPanel ? { botPanel: opts.botPanel } : {}),
   });
 }
 

@@ -1,4 +1,4 @@
-import type { DeveloperBotCommand, DeveloperBotCondition } from "../types";
+import type { DeveloperBotCommand, DeveloperBotCondition, DeveloperBotPanel } from "../types";
 
 export interface EduScriptResult {
   commands: DeveloperBotCommand[];
@@ -21,7 +21,11 @@ const assignmentPattern = /^(?:let\s+)?([a-z_][a-z0-9_]*)\s*=\s*f?(["'])(.*)\2\s
 const outputPattern = /^(?:return|reply|say|send)\s+f?(["'])(.*)\1\s*$/i;
 const outputVariablePattern = /^(?:return|reply|say|send)\s+([a-z_][a-z0-9_]*)\s*$/i;
 const embedPattern = /^embed\s+f?(["'])(.*)\1\s*$/i;
-const buttonPattern = /^button\s+f?(["'])(.*)\1\s*$/i;
+const panelPattern = /^panel\s+f?(["'])(.*)\1\s*$/i;
+const descriptionPattern = /^description\s+f?(["'])(.*)\1\s*$/i;
+const colorPattern = /^color\s+(["'])(#[0-9a-f]{6})\1\s*$/i;
+const fieldPattern = /^field\s+(["'])(.*?)\1\s+(["'])(.*?)\3\s*$/i;
+const buttonPattern = /^button\s+(["'])(.*?)\1(?:\s+(verify|link)(?:\s+(["'])(.*?)\4)?)?\s*$/i;
 const authenticatePattern = /^(?:authenticate|verify)\s+user\s*$/i;
 const conditionPattern = /^(if|elif)\s+args\s*(==|contains|starts_with)\s*(["'])(.*)\3\s*:\s*$/i;
 const emptyConditionPattern = /^if\s+(not\s+)?args\s*:\s*$/i;
@@ -36,18 +40,23 @@ export const eduScriptTemplates: EduScriptTemplate[] = [
 @verify
 command join:
     authenticate user
-    embed "✅ Authentication panel"
-    say "Welcome {user}! You are verified. Join code / extra info: {args}"
-    button "Joined + verified"`,
+    panel "Server verification"
+    description "Welcome {user}. Verify to unlock the server."
+    color "#60a5fa"
+    field "Minecraft name" "{args}"
+    field "Status" "Ready to verify"
+    button "Verify me" verify`,
   },
   {
     id: "server-helper",
     name: "Minecraft server helper",
     description: "Replies with server status, code, and quick help.",
     source: `command code:
-    embed "🎮 MC Education"
-    say "Join code: ABC123 • Ask staff if the world is full."
-    button "Copy join code"
+    panel "🎮 Minecraft Education"
+    description "The world is online."
+    color "#22c55e"
+    field "Join code" "ABC123"
+    field "Need help?" "Ping @admins"
 
 command help:
     say "Commands: code, rules, verify. Args are whatever the user types after the command."`,
@@ -57,9 +66,11 @@ command help:
     name: "Support ticket starter",
     description: "Collects a short problem description using {args}.",
     source: `command ticket:
-    embed "🛠️ Support request"
-    say "{user} needs help with: {args}"
-    button "Staff will reply soon"`,
+    panel "🛠️ Support request"
+    description "A staff member will reply soon."
+    color "#a855f7"
+    field "Member" "{user}"
+    field "Problem" "{args}"`,
   },
   {
     id: "smart-helper",
@@ -139,6 +150,7 @@ export function compileEduScript(source: string): EduScriptResult {
     const conditions: DeveloperBotCondition[] = [];
     let activeCondition: DeveloperBotCondition | null = null;
     let action: DeveloperBotCommand["action"] = verificationDecoratorLine ? "verify" : "reply";
+    let panel: DeveloperBotPanel | undefined;
     let lastBlockIndex = blockIndex;
     let ended = false;
 
@@ -183,17 +195,48 @@ export function compileEduScript(source: string): EduScriptResult {
 
       const embedMatch = blockLine.match(embedPattern);
       if (embedMatch) {
-        const next = `**${decodeString(embedMatch[2])}**`;
-        if (activeCondition) activeCondition.response = appendLine(activeCondition.response, next);
-        else response = appendLine(response, next);
+        const title = decodeString(embedMatch[2]);
+        panel = { ...(panel ?? { title }), title };
+        continue;
+      }
+
+      const panelMatch = blockLine.match(panelPattern);
+      if (panelMatch) {
+        const title = decodeString(panelMatch[2]);
+        panel = { ...(panel ?? { title }), title };
+        continue;
+      }
+
+      const descriptionMatch = blockLine.match(descriptionPattern);
+      if (descriptionMatch) {
+        if (!panel) errors.push(`Line ${blockIndex + 1}: add panel "Title" before description.`);
+        else panel.description = decodeString(descriptionMatch[2]);
+        continue;
+      }
+
+      const colorMatch = blockLine.match(colorPattern);
+      if (colorMatch) {
+        if (!panel) errors.push(`Line ${blockIndex + 1}: add panel "Title" before color.`);
+        else panel.color = colorMatch[2].toLowerCase();
+        continue;
+      }
+
+      const fieldMatch = blockLine.match(fieldPattern);
+      if (fieldMatch) {
+        if (!panel) errors.push(`Line ${blockIndex + 1}: add panel "Title" before field.`);
+        else panel.fields = [...(panel.fields ?? []), { name: decodeString(fieldMatch[2]), value: decodeString(fieldMatch[4]) }].slice(0, 8);
         continue;
       }
 
       const buttonMatch = blockLine.match(buttonPattern);
       if (buttonMatch) {
-        const next = `▸ ${decodeString(buttonMatch[2])}`;
-        if (activeCondition) activeCondition.response = appendLine(activeCondition.response, next);
-        else response = appendLine(response, next);
+        if (!panel) errors.push(`Line ${blockIndex + 1}: add panel "Title" before button.`);
+        else {
+          const buttonAction = buttonMatch[3]?.toLowerCase() === "link" ? "link" : "verify";
+          const url = buttonAction === "link" ? decodeString(buttonMatch[5] ?? "") : undefined;
+          if (buttonAction === "link" && !/^https:\/\//i.test(url ?? "")) errors.push(`Line ${blockIndex + 1}: link buttons need an https:// URL.`);
+          else panel.button = { label: decodeString(buttonMatch[2]), action: buttonAction, ...(url ? { url } : {}) };
+        }
         continue;
       }
 
@@ -220,15 +263,15 @@ export function compileEduScript(source: string): EduScriptResult {
         continue;
       }
 
-      errors.push(`Line ${blockIndex + 1}: expected if/elif/else, say "text", embed "title", button "label", authenticate user, let name = "text", or return "text".`);
+      errors.push(`Line ${blockIndex + 1}: expected if/elif/else, say "text", panel "title", description "text", field "name" "value", button "label" verify, authenticate user, or return "text".`);
     }
 
     const validConditions = conditions.filter((condition) => condition.response.trim());
-    if (!response && !validConditions.length && !errors.some((error) => error.startsWith(`Line ${lineNumber}:`))) errors.push(`Line ${lastBlockIndex + 1}: add a say/reply/return for this command.`);
+    if (!response && !validConditions.length && !panel && !errors.some((error) => error.startsWith(`Line ${lineNumber}:`))) errors.push(`Line ${lastBlockIndex + 1}: add a reply or a panel for this command.`);
     if (conditions.some((condition) => !condition.response.trim())) errors.push(`Line ${lastBlockIndex + 1}: every if/elif branch needs a reply.`);
     if (response.length > 300 || validConditions.some((condition) => condition.response.length > 300)) errors.push(`Line ${lastBlockIndex + 1}: each reply must be 300 characters or shorter.`);
     if (commands.some((command) => command.name === name)) errors.push(`Line ${lineNumber}: "${name}" is already defined.`);
-    if ((response.trim() || validConditions.length) && response.length <= 300 && !commands.some((command) => command.name === name)) commands.push({ name, response, action, ...(validConditions.length ? { conditions: validConditions } : {}) });
+    if ((response.trim() || validConditions.length || panel) && response.length <= 300 && !commands.some((command) => command.name === name)) commands.push({ name, response, action, ...(validConditions.length ? { conditions: validConditions } : {}), ...(panel ? { panel } : {}) });
     verificationDecoratorLine = 0;
     index = Math.max(index, ended ? blockIndex : lastBlockIndex);
   }
@@ -248,11 +291,32 @@ export function commandsToEduScript(commands: DeveloperBotCommand[]) {
       else lines.push(`    ${keyword} args ${condition.operator === "equals" ? "==" : condition.operator} "${encodeString(condition.value)}":`);
       lines.push(`        say "${encodeString(condition.response)}"`);
     });
+    if (command.panel) {
+      lines.push(`    panel "${encodeString(command.panel.title)}"`);
+      if (command.panel.description) lines.push(`    description "${encodeString(command.panel.description)}"`);
+      if (command.panel.color) lines.push(`    color "${command.panel.color}"`);
+      (command.panel.fields ?? []).forEach((field) => lines.push(`    field "${encodeString(field.name)}" "${encodeString(field.value)}"`));
+      if (command.panel.button) lines.push(`    button "${encodeString(command.panel.button.label)}" ${command.panel.button.action}${command.panel.button.url ? ` "${encodeString(command.panel.button.url)}"` : ""}`);
+    }
     if (command.conditions?.length) {
       if (command.response) lines.push(`    else:`, `        say "${encodeString(command.response)}"`);
-    } else lines.push(`    say "${encodeString(command.response)}"`);
+    } else if (command.response) lines.push(`    say "${encodeString(command.response)}"`);
     return lines.join("\n");
   }).join("\n\n");
+}
+
+function fillTemplate(value: string, user: string, args: string) {
+  return value.replace(/\{user\}/gi, user).replace(/\{args\}/gi, args || "nothing");
+}
+
+export function renderDeveloperBotPanel(command: DeveloperBotCommand, user: string, args: string): DeveloperBotPanel | undefined {
+  if (!command.panel) return undefined;
+  return {
+    ...command.panel,
+    title: fillTemplate(command.panel.title, user, args.trim()),
+    description: command.panel.description ? fillTemplate(command.panel.description, user, args.trim()) : undefined,
+    fields: command.panel.fields?.map((field) => ({ ...field, name: fillTemplate(field.name, user, args.trim()), value: fillTemplate(field.value, user, args.trim()) })),
+  };
 }
 
 export function renderDeveloperBotCommand(command: DeveloperBotCommand, user: string, args: string) {
@@ -266,7 +330,5 @@ export function renderDeveloperBotCommand(command: DeveloperBotCommand, user: st
     if (condition.operator === "starts_with") return lower.startsWith(expected);
     return lower === expected;
   });
-  return (match?.response || command.response || "I don't have a response for that yet.")
-    .replace(/\{user\}/gi, user)
-    .replace(/\{args\}/gi, input || "nothing");
+  return fillTemplate(match?.response || command.response || command.panel?.description || command.panel?.title || "I don't have a response for that yet.", user, input);
 }

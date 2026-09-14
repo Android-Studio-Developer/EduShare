@@ -18,14 +18,22 @@ const cleanCommands = (commands: DeveloperBotCommand[]) => commands
   .map((command) => ({
     name: command.name.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 24),
     response: command.response.trim().slice(0, 300),
-    action: command.action === "verify" ? "verify" as const : "reply" as const,
+    action: command.action === "verify" || command.action === "redeem" || command.action === "buy" ? command.action : "reply" as const,
+    ...(command.cosmeticId ? { cosmeticId: command.cosmeticId.slice(0, 80) } : {}),
     conditions: (command.conditions ?? []).map((condition) => ({
       operator: condition.operator,
       value: condition.value.trim().slice(0, 100),
       response: condition.response.trim().slice(0, 300),
     })).filter((condition) => condition.response).slice(0, 8),
+    ...(command.panel ? { panel: {
+      title: command.panel.title.trim().slice(0, 80),
+      description: command.panel.description?.trim().slice(0, 300) ?? "",
+      color: /^#[0-9a-f]{6}$/i.test(command.panel.color ?? "") ? command.panel.color : "#5865f2",
+      fields: (command.panel.fields ?? []).map((field) => ({ name: field.name.trim().slice(0, 80), value: field.value.trim().slice(0, 300), inline: !!field.inline })).filter((field) => field.name && field.value).slice(0, 8),
+      ...(command.panel.button ? { button: { label: command.panel.button.label.trim().slice(0, 40), action: command.panel.button.action, ...(command.panel.button.url?.startsWith("https://") ? { url: command.panel.button.url.slice(0, 500) } : {}) } } : {}),
+    } } : {}),
   }))
-  .filter((command, index, items) => command.name && (command.response || command.conditions.length) && items.findIndex((item) => item.name === command.name) === index)
+  .filter((command, index, items) => command.name && (command.response || command.conditions.length || command.panel) && items.findIndex((item) => item.name === command.name) === index)
   .slice(0, 12);
 
 const BOT_WRITE_TIMEOUT_MS = 15_000;

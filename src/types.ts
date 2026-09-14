@@ -80,6 +80,7 @@ export interface ChatMessage {
   replyPing?: boolean;
   poll?: { question: string; options: string[]; votes: Record<string, string[]> };
   youtubeId?: string;
+  botPanel?: DeveloperBotPanel;
 }
 
 export type DeveloperApplicationStatus = "pending" | "approved" | "rejected";
@@ -103,8 +104,30 @@ export interface DeveloperApplication {
 export interface DeveloperBotCommand {
   name: string;
   response: string;
-  action?: "reply" | "verify";
+  action?: "reply" | "verify" | "redeem" | "buy";
+  cosmeticId?: string;
   conditions?: DeveloperBotCondition[];
+  panel?: DeveloperBotPanel;
+}
+
+export interface DeveloperBotPanel {
+  title: string;
+  description?: string;
+  color?: string;
+  fields?: { name: string; value: string; inline?: boolean }[];
+  button?: { label: string; action: "verify" | "link"; url?: string };
+}
+
+export interface RedeemCode {
+  id: string;
+  code: string;
+  cosmeticId: string;
+  cosmeticLabel: string;
+  used: boolean;
+  usedBy: string;
+  usedAt: number;
+  createdAt: number;
+  createdBy: string;
 }
 
 export interface DeveloperBotCondition {
@@ -171,9 +194,16 @@ export type CommunityServerRole = "owner" | "admin" | "mod" | "member";
 export interface CommunityServerTextChannel {
   id: string;
   name: string;
+  categoryId?: string;
 }
 
 export interface CommunityServerVoiceChannel {
+  id: string;
+  name: string;
+  categoryId?: string;
+}
+
+export interface CommunityServerCategory {
   id: string;
   name: string;
 }
@@ -195,6 +225,7 @@ export interface CommunityChatServer {
   roles: Record<string, CommunityServerRole>;
   textChannels: CommunityServerTextChannel[];
   voiceChannels: CommunityServerVoiceChannel[];
+  categories?: CommunityServerCategory[];
   botIds: string[];
   themeColors: string[];
   boostCount: number;

@@ -70,6 +70,7 @@ const Develop = lazy(() => import("./pages/Develop"));
 const Fun = lazy(() => import("./pages/Fun"));
 const InviteLanding = lazy(() => import("./pages/InviteLanding"));
 const BotMarketplace = lazy(() => import("./pages/BotMarketplace"));
+const EduPyTutor = lazy(() => import("./pages/EduPyTutor"));
 
 const UNLOCK_KEY = "edushare-site-gate-v2";
 
@@ -122,6 +123,7 @@ function AppContent() {
       <Route path="/calculator" element={<ProtectedRoute><Calculator /></ProtectedRoute>} />
       <Route path="/bedwars" element={<ProtectedRoute><BedwarsRanked /></ProtectedRoute>} />
       <Route path="/develop" element={<ProtectedRoute><Develop /></ProtectedRoute>} />
+      <Route path="/develop/learn" element={<ProtectedRoute><EduPyTutor /></ProtectedRoute>} />
       <Route
         path="/moderation"
         element={

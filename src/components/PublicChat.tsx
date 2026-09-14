@@ -43,9 +43,11 @@ import RankBadge from "./RankBadge";
 import GuildTag from "./GuildTag";
 import { subscribeToGuilds } from "../lib/guilds";
 import { recordDeveloperBotEvent, subscribeToDeveloperBots, verifyWithDeveloperBot } from "../lib/developers";
-import { renderDeveloperBotCommand } from "../lib/eduScript";
+import { renderDeveloperBotCommand, renderDeveloperBotPanel } from "../lib/eduScript";
 import type { DeveloperBot, Guild } from "../types";
 import MentionInput from "./MentionInput";
+import BotMessagePanel from "./BotMessagePanel";
+import { applyBasicChatCommand, BASIC_CHAT_COMMANDS, type ChatSlashCommand } from "../lib/chatCommands";
 
 function timeAgo(ts: number) {
   const s = Math.floor((Date.now() - ts) / 1000);
@@ -99,16 +101,17 @@ function renderEmojiText(text: string, myName: string, myUsername: string, emoji
 }
 
 function renderWithMentions(text: string, myName: string, myUsername: string, emojis: CustomEmoji[] = []) {
-  const segments = text.split(URL_RE);
-  return segments.map((segment, i) =>
+  const segments = text.split(/(\|\|[^|]+\|\|)/g);
+  return segments.flatMap((section, sectionIndex) => section.startsWith("||") && section.endsWith("||")
+    ? [<button key={`spoiler-${sectionIndex}`} type="button" title="Click to reveal spoiler" className="rounded bg-black/70 px-1 text-transparent hover:bg-black/35 hover:text-white focus:text-white">{section.slice(2, -2)}</button>]
+    : section.split(URL_RE).map((segment, i) =>
     /^https?:\/\//.test(segment) ? (
       <a key={i} href={segment} target="_blank" rel="noopener noreferrer" className="text-brand-300 underline hover:text-brand-200">
         {segment}
       </a>
     ) : (
       <span key={i}>{renderEmojiText(segment, myName, myUsername, emojis, String(i))}</span>
-    ),
-  );
+    )));
 }
 
 function publicEmojiPool(profiles: UserProfile[], authorId: string) {
@@ -158,6 +161,7 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
   const [emojiOpen, setEmojiOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
   const lastAiCallRef = useRef(0);
   const lastAmbientReplyRef = useRef(0);
   const lastTypingSentRef = useRef(0);
@@ -171,6 +175,10 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
   // shown to other people (chat author, duel labels, typing indicator, etc.).
   const myName = myProfile?.displayName || user?.displayName || undefined;
   const guildById = useMemo(() => new Map(guilds.map((guild) => [guild.id, guild])), [guilds]);
+  const slashCommands = useMemo<ChatSlashCommand[]>(() => [
+    ...BASIC_CHAT_COMMANDS,
+    ...developerBots.filter((bot) => bot.enabled).flatMap((bot) => bot.commands.map((command) => ({ name: `${bot.handle} ${command.name}`, description: `Run ${bot.name}'s ${command.name} command.`, category: "Apps", insertText: `/${bot.handle} ${command.name} ` }))),
+  ], [developerBots]);
 
   useEffect(() => {
     pingAudioRef.current = new Audio(pingSoundUrl);
@@ -264,7 +272,7 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
   }, [myDuels.asChallenger, user]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    if (stickToBottomRef.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages.length]);
 
   function toggleReaction(m: ChatMessage, emoji: string) {
@@ -549,12 +557,13 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
     const reply = command
       ? renderDeveloperBotCommand(command, myName ?? "Member", args).slice(0, 500)
       : `Unknown command. Try: ${bot.commands.map((item) => item.name).join(", ")}`;
+    const panel = command ? renderDeveloperBotPanel(command, myName ?? "Member", args) : undefined;
     setText("");
     const queuedNotice = window.setTimeout(() => setFilterMessage("Message queued — reconnecting to chat…"), 4_000);
     void sendPublicMessage(user.uid, myName ?? "Anonymous", raw, myProfile?.rank ?? "none", { authorPhotoUrl: myProfile?.photoUrl ?? "" })
       .then(async () => {
-        if (command?.action === "verify" && bot.verificationEnabled && !myProfile?.verifiedBotIds.includes(bot.id)) await verifyWithDeveloperBot(bot.id, user.uid);
-        return sendPublicMessage(user.uid, bot.name, reply, "none", { authorPhotoUrl: bot.avatarUrl, isBot: true, botId: bot.id, triggeredById: user.uid });
+        if (command?.action === "verify" && bot.verificationEnabled && panel?.button?.action !== "verify" && !myProfile?.verifiedBotIds.includes(bot.id)) await verifyWithDeveloperBot(bot.id, user.uid);
+        return sendPublicMessage(user.uid, bot.name, reply, "none", { authorPhotoUrl: bot.avatarUrl, isBot: true, botId: bot.id, triggeredById: user.uid, botPanel: panel });
       })
       .then(() => {
         window.clearTimeout(queuedNotice); setFilterMessage("");
@@ -588,13 +597,21 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
         setText("");
         return;
       }
-      const localHit = checkLocalProfanity(trimmed);
+      const basicCommand = applyBasicChatCommand(trimmed);
+      if (basicCommand && "settings" in basicCommand) { setFilterMessage("Chat notification settings are in your profile and the notification bell."); return; }
+      let outgoing = trimmed;
+      if (basicCommand && "text" in basicCommand) {
+        if (!basicCommand.text) { setFilterMessage("That command needs a message after it."); return; }
+        outgoing = basicCommand.text.slice(0, 500);
+      }
+      const localHit = checkLocalProfanity(outgoing);
       if (localHit) {
         setFilterMessage(`Message blocked: ${localHit.reason}. Chat is paused for 2 hours.`);
         return;
       }
-      if (runDeveloperBot(trimmed)) return;
-      const sendPromise = sendPublicMessage(user.uid, myName ?? "Anonymous", trimmed, myProfile?.rank ?? "none", {
+      if (runDeveloperBot(outgoing)) return;
+      stickToBottomRef.current = true;
+      const sendPromise = sendPublicMessage(user.uid, myName ?? "Anonymous", outgoing, myProfile?.rank ?? "none", {
         authorPhotoUrl: myProfile?.photoUrl ?? "",
         replyTo: replyTo ? { id: replyTo.id, authorId: replyTo.authorId, author: replyTo.authorName, text: replyTo.text, ping: replyPing } : undefined,
       });
@@ -610,9 +627,9 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
       void sendPromise.then((sentRef) => {
         window.clearTimeout(queuedNotice);
         setFilterMessage("");
-        notifyMentioned(trimmed, user.uid, myName ?? "Someone");
+        notifyMentioned(outgoing, user.uid, myName ?? "Someone");
         if (sentReply && shouldPingReply && sentReply.authorId !== user.uid) {
-          void createNotification({ recipientId: sentReply.authorId, type: "mention", title: `${myName ?? "Someone"} replied to you in Global Chat`, message: trimmed.slice(0, 100), link: "/chat" });
+          void createNotification({ recipientId: sentReply.authorId, type: "mention", title: `${myName ?? "Someone"} replied to you in Global Chat`, message: outgoing.slice(0, 100), link: "/chat" });
         }
         // AI screening happens after send so it never blocks the composer.
         void screenChatMessageRemote(user.uid, trimmed, user.email).then((screening) => {
@@ -621,13 +638,13 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
             setFilterMessage(`Your message was removed by AI moderation: ${screening.reason}. Chat is paused for 2 hours.`);
             return;
           }
-          const directlyAddressed = /(?:^|\s)@?edubot\b/i.test(trimmed);
+          const directlyAddressed = /(?:^|\s)@?edubot\b/i.test(outgoing);
           const botSpokeRecently = messages.some((message) => message.isBot && Date.now() - message.createdAt < 45_000);
           if (!directlyAddressed && (botSpokeRecently || Date.now() - lastAmbientReplyRef.current < 45_000)) return;
           lastAmbientReplyRef.current = Date.now();
           const context: ChatMessage[] = [...messages.slice(-11), {
             id: sentRef.id,
-            text: trimmed,
+            text: outgoing,
             authorId: user.uid,
             authorName: myName ?? "Anonymous",
             authorRank: myProfile?.rank ?? "none",
@@ -735,7 +752,7 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
         </div>
       )}
 
-      <div ref={scrollRef} className={`${tall ? "h-[34rem] min-h-[34rem] lg:h-[calc(100vh-15rem)] lg:max-h-[52rem]" : "max-h-56"} space-y-2.5 overflow-x-hidden overflow-y-auto p-4 sm:p-5`}>
+      <div ref={scrollRef} onScroll={(event) => { const target = event.currentTarget; stickToBottomRef.current = target.scrollHeight - target.scrollTop - target.clientHeight < 72; }} className={`${tall ? "h-[34rem] min-h-[34rem] lg:h-[calc(100vh-15rem)] lg:max-h-[52rem]" : "max-h-56"} space-y-2.5 overflow-x-hidden overflow-y-auto p-4 sm:p-5`}>
         {messages.length === 0 ? (
           <p className="py-4 text-center text-sm text-white/30">No messages yet — say hi.</p>
         ) : (
@@ -799,7 +816,7 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
                   <span className="shrink-0 text-[10px] text-white/30">{timeAgo(m.createdAt)}</span>
                   {m.deliveryState === "sending" ? <Clock3 size={10} className="text-amber-300/60" aria-label="Sending"/> : m.authorId === user?.uid ? <CheckCheck size={10} className="text-emerald-300/45" aria-label="Sent"/> : null}
                 </div>
-                {m.poll ? (
+                {m.botPanel ? <BotMessagePanel panel={m.botPanel} onVerify={m.botId && user ? async () => { await verifyWithDeveloperBot(m.botId!, user.uid); setFilterMessage(`Verified with ${m.authorName}.`); } : undefined}/> : m.poll ? (
                   <div className="mt-1 max-w-xs rounded-xl border border-border bg-surface-2/60 p-3">
                     <p className="flex items-center gap-1.5 text-sm font-semibold text-white">
                       <BarChart3 size={13} className="shrink-0 text-brand-400" /> {m.poll.question}
@@ -1000,7 +1017,8 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
                 onChange={handleTextChange}
                 profiles={allProfiles}
                 includeSpecial
-                placeholder="Say something, or try !coinflip, !rps, !slots, !trivia, !duel..."
+                slashCommands={slashCommands}
+                placeholder="Message Global Chat · type / for commands or @ to mention"
                 maxLength={500}
                 className="w-full rounded-xl border border-border bg-surface-2 px-4 py-2 text-sm text-white placeholder:text-white/30 focus:border-brand-500/50 focus:outline-none"
               />

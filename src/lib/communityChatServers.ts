@@ -1,6 +1,6 @@
-import { addDoc, arrayUnion, collection, deleteDoc, doc, getDocs, increment, limit, onSnapshot, orderBy, query, runTransaction, updateDoc, where, writeBatch } from "firebase/firestore";
+import { addDoc, arrayRemove, arrayUnion, collection, deleteDoc, doc, getDocs, increment, limit, onSnapshot, orderBy, query, runTransaction, setDoc, updateDoc, where, writeBatch } from "firebase/firestore";
 import { db } from "./firebase";
-import type { ChatMessage, CommunityChatServer, DeveloperBot, Rank } from "../types";
+import type { ChatMessage, CommunityChatServer, DeveloperBot, DeveloperBotPanel, Rank } from "../types";
 import { COMMUNITY_SERVER_BOOST_COST } from "./communityServerBoosts";
 
 const serversRef = collection(db, "communityChatServers");
@@ -31,6 +31,7 @@ function withServerDefaults(id: string, data: Record<string, unknown>): Communit
     roles: typeof data.roles === "object" && data.roles !== null ? data.roles as CommunityChatServer["roles"] : ownerId ? { [ownerId]: "owner" } : {},
     textChannels: Array.isArray(data.textChannels) && data.textChannels.length ? data.textChannels as CommunityChatServer["textChannels"] : DEFAULT_TEXT_CHANNELS,
     voiceChannels: Array.isArray(data.voiceChannels) && data.voiceChannels.length ? data.voiceChannels as CommunityChatServer["voiceChannels"] : DEFAULT_VOICE_CHANNELS,
+    categories: Array.isArray(data.categories) ? data.categories as CommunityChatServer["categories"] : [],
     botIds: Array.isArray(data.botIds) ? data.botIds.filter((item): item is string => typeof item === "string") : [],
     themeColors: Array.isArray(data.themeColors) ? data.themeColors.filter((item): item is string => typeof item === "string").slice(0, 3) : [],
     isPublic: typeof data.isPublic === "boolean" ? data.isPublic : true,
@@ -93,12 +94,20 @@ export async function boostCommunityChatServer(serverId: string, userId: string)
   });
 }
 
-export function updateCommunityChatServer(serverId: string, input: Partial<Pick<CommunityChatServer, "name" | "description" | "rules" | "iconUrl" | "bannerUrl" | "linkedMinecraftServerId" | "memberIds" | "bannedUserIds" | "bannedUsernames" | "roles" | "textChannels" | "voiceChannels" | "botIds" | "themeColors" | "isPublic">>) {
+export function updateCommunityChatServer(serverId: string, input: Partial<Pick<CommunityChatServer, "name" | "description" | "rules" | "iconUrl" | "bannerUrl" | "linkedMinecraftServerId" | "memberIds" | "bannedUserIds" | "bannedUsernames" | "roles" | "textChannels" | "voiceChannels" | "categories" | "botIds" | "themeColors" | "isPublic">>) {
   return updateDoc(doc(db, "communityChatServers", serverId), input);
 }
 
 export function joinCommunityChatServer(serverId: string, userId: string) {
+  // TEMP DIAGNOSTIC — pin down an unexplained auto-rejoin bug. Remove once
+  // found. Logs a real stack trace so devtools shows exactly which call
+  // site fired, not just "join happened".
+  console.warn(`[join-debug] joinCommunityChatServer called: server=${serverId} user=${userId}`, new Error().stack);
   return updateDoc(doc(db, "communityChatServers", serverId), { memberIds: arrayUnion(userId) });
+}
+
+export function leaveCommunityChatServer(serverId: string, userId: string) {
+  return updateDoc(doc(db, "communityChatServers", serverId), { memberIds: arrayRemove(userId) });
 }
 
 const MAX_SERVER_UPLOADS = 3;
@@ -140,6 +149,7 @@ export function subscribeToCommunityChatMessages(serverId: string, callback: (me
         isBot: data.isBot === true,
         botId: typeof data.botId === "string" ? data.botId : undefined,
         triggeredById: typeof data.triggeredById === "string" ? data.triggeredById : undefined,
+        botPanel: data.botPanel && typeof data.botPanel === "object" ? data.botPanel as DeveloperBotPanel : undefined,
         replyToId: typeof data.replyToId === "string" ? data.replyToId : undefined,
         replyToAuthorId: typeof data.replyToAuthorId === "string" ? data.replyToAuthorId : undefined,
         replyToAuthor: typeof data.replyToAuthor === "string" ? data.replyToAuthor : undefined,
@@ -152,7 +162,7 @@ export function subscribeToCommunityChatMessages(serverId: string, callback: (me
   }, onError);
 }
 
-export function sendCommunityBotMessage(serverId: string, triggeredById: string, bot: DeveloperBot, text: string, channelId = "general") {
+export function sendCommunityBotMessage(serverId: string, triggeredById: string, bot: DeveloperBot, text: string, channelId = "general", botPanel?: DeveloperBotPanel) {
   return addDoc(messagesRef(serverId, channelId), {
     authorId: bot.id,
     authorName: bot.name,
@@ -163,6 +173,7 @@ export function sendCommunityBotMessage(serverId: string, triggeredById: string,
     botId: bot.id,
     triggeredById,
     createdAt: Date.now(),
+    ...(botPanel ? { botPanel } : {}),
   });
 }
 
@@ -176,4 +187,41 @@ export function sendCommunityChatMessage(serverId: string, authorId: string, aut
 export function deleteCommunityChatMessage(serverId: string, messageId: string, channelId = "general") {
   if (channelId === "general") return deleteDoc(doc(db, "communityChatServers", serverId, "messages", messageId));
   return deleteDoc(doc(db, "communityChatServers", serverId, "channels", channelId, "messages", messageId));
+}
+
+// Typing indicator — one flat "typing" subcollection per server, keyed by
+// channelId+userId so it doesn't need a per-channel path like messages does.
+// Callers debounce writes client-side; readers ignore anything stale (the
+// UI treats > 6s old as "stopped typing" instead of relying on a delete
+// always landing, since a closed tab never fires one).
+const TYPING_STALE_MS = 6_000;
+
+function typingDocId(channelId: string, userId: string) {
+  return `${channelId}__${userId}`;
+}
+
+export function setTyping(serverId: string, channelId: string, userId: string, name: string) {
+  return setDoc(doc(db, "communityChatServers", serverId, "typing", typingDocId(channelId, userId)), {
+    channelId,
+    userId,
+    name,
+    updatedAt: Date.now(),
+  });
+}
+
+export function clearTyping(serverId: string, channelId: string, userId: string) {
+  return deleteDoc(doc(db, "communityChatServers", serverId, "typing", typingDocId(channelId, userId))).catch(() => undefined);
+}
+
+export function subscribeToTyping(serverId: string, channelId: string, callback: (typers: { userId: string; name: string }[]) => void) {
+  const typingQuery = query(collection(db, "communityChatServers", serverId, "typing"), where("channelId", "==", channelId));
+  return onSnapshot(typingQuery, (snapshot) => {
+    const now = Date.now();
+    callback(
+      snapshot.docs
+        .map((item) => item.data() as { userId?: string; name?: string; updatedAt?: number })
+        .filter((item) => typeof item.updatedAt === "number" && now - item.updatedAt < TYPING_STALE_MS && item.userId && item.name)
+        .map((item) => ({ userId: item.userId as string, name: item.name as string })),
+    );
+  });
 }
