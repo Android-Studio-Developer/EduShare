@@ -111,7 +111,12 @@ export default function CommunityServer() {
   const linkedMinecraftServer = useMemo(() => minecraftServers.find((item) => item.id === server?.linkedMinecraftServerId) ?? null, [minecraftServers, server?.linkedMinecraftServerId]);
   const linkedMinecraftCode = useMemo(() => (linkedMinecraftServer?.code ?? []).map(getIcon), [linkedMinecraftServer?.code]);
   const linkedMinecraftCodeText = linkedMinecraftCode.map((icon) => icon.label).join(" • ");
-  const serverGradient = server?.themeColors?.length === 3 ? `linear-gradient(135deg, ${server.themeColors.join(", ")})` : "linear-gradient(135deg, #5865f2, #1e1f22)";
+  const turboActive = isTurboActive(turbo);
+  const hasServerTheme = server?.themeColors?.length === 3;
+  const serverGradient = hasServerTheme ? `linear-gradient(135deg, ${server.themeColors.join(", ")})` : "linear-gradient(135deg, #5865f2, #1e1f22)";
+  const serverSurfaceGradient = hasServerTheme
+    ? `linear-gradient(145deg, #313338 8%, ${server.themeColors[0]}55 40%, ${server.themeColors[1]}4d 70%, ${server.themeColors[2]}55 100%)`
+    : undefined;
 
   useEffect(() => {
     if (!server) return;
@@ -141,9 +146,13 @@ export default function CommunityServer() {
 
   async function saveTheme() {
     if (!server || !canManage) return;
-    if (!isStaff && !isTurboActive(turbo)) { setNotice("Turbo is required for three-color server themes."); return; }
-    await updateCommunityChatServer(server.id, { themeColors });
-    setNotice("Three-color theme saved.");
+    if (!turboActive) { setNotice("Turbo is required for three-color server themes."); return; }
+    try {
+      await updateCommunityChatServer(server.id, { themeColors });
+      setNotice("Three-color theme saved.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not save the Turbo theme.");
+    }
   }
 
   async function changeNotificationLevel(level: CommunityNotificationLevel) {
@@ -291,7 +300,7 @@ export default function CommunityServer() {
             </div>
           </aside>
 
-          <main className="min-h-0 min-w-0 bg-[#313338]" style={{ background: server.themeColors?.length === 3 ? `linear-gradient(145deg, #313338 15%, ${server.themeColors[0]}44 60%, ${server.themeColors[2]}33 100%)` : undefined }}>
+          <main className="min-h-0 min-w-0 bg-[#313338]" style={{ background: serverSurfaceGradient }}>
             {selectedChannel?.id === "rules" ? (
               <div className="flex h-full min-h-0 flex-col">
                 <header className="flex h-[49px] items-center gap-2 border-b border-black/35 bg-[#313338] px-5 shadow-sm shadow-black/20"><ShieldCheck size={19} className="text-white/45"/><h2 className="font-bold text-white">rules</h2></header>
@@ -348,7 +357,7 @@ export default function CommunityServer() {
                 </div>
                 <button type="button" onClick={() => void saveAppearance()} className="mt-3 rounded-lg bg-brand-500 px-3 py-2 text-xs font-bold text-white">Save look</button>
               </section>
-              <section className="rounded-xl border border-fuchsia-300/15 bg-gradient-to-br from-fuchsia-500/10 to-violet-500/5 p-4"><h3 className="flex items-center gap-2 font-bold text-white"><Zap size={15} className="text-fuchsia-300"/>Turbo theme</h3><p className="mt-1 text-xs leading-5 text-white/35">Mix exactly three colors into the server banner and frame. Turbo costs 200 credits per 30 days.</p><div className="mt-3 grid grid-cols-3 gap-2">{themeColors.map((color, index) => <input key={index} aria-label={`Theme color ${index + 1}`} type="color" value={color} onChange={(event) => setThemeColors((colors) => colors.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} className="h-11 w-full rounded bg-transparent"/>)}</div><div className="mt-3 h-12 rounded-lg" style={{ background: `linear-gradient(135deg, ${themeColors.join(", ")})` }}/><button type="button" onClick={() => void saveTheme()} disabled={!isStaff && !isTurboActive(turbo)} className="mt-3 rounded-lg bg-gradient-to-r from-fuchsia-500 to-violet-500 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-35">{isStaff || isTurboActive(turbo) ? "Save Turbo theme" : "Turbo required"}</button></section>
+              <section className="rounded-xl border border-fuchsia-300/15 bg-gradient-to-br from-fuchsia-500/10 to-violet-500/5 p-4"><h3 className="flex items-center gap-2 font-bold text-white"><Zap size={15} className="text-fuchsia-300"/>Turbo theme</h3><p className="mt-1 text-xs leading-5 text-white/35">Mix exactly three colors into the server banner and frame. Turbo costs 200 credits per 30 days.</p><div className="mt-3 grid grid-cols-3 gap-2">{themeColors.map((color, index) => <input key={index} aria-label={`Theme color ${index + 1}`} type="color" value={color} disabled={!turboActive} onChange={(event) => setThemeColors((colors) => colors.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} className="h-11 w-full rounded bg-transparent disabled:cursor-not-allowed disabled:opacity-40"/>)}</div><div className="mt-3 h-12 rounded-lg" style={{ background: `linear-gradient(135deg, ${themeColors.join(", ")})` }}/><button type="button" onClick={() => void saveTheme()} disabled={!turboActive} className="mt-3 rounded-lg bg-gradient-to-r from-fuchsia-500 to-violet-500 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-35">{turboActive ? "Save Turbo theme" : "Turbo required"}</button></section>
               <section className="rounded-xl border border-white/8 bg-black/15 p-4"><h3 className="flex items-center gap-2 font-bold text-white"><Bot size={15}/>Installed bots</h3><p className="mt-1 text-xs leading-5 text-white/35">{server.botIds?.length ?? 0} app{server.botIds?.length === 1 ? "" : "s"} installed. Add or remove apps in the marketplace.</p><Link to="/bot-marketplace" className="mt-3 inline-flex rounded-lg bg-[#5865f2] px-3 py-2 text-xs font-bold text-white">Open marketplace</Link></section>
               <section className="rounded-xl border border-white/8 bg-black/15 p-4">
                 <h3 className="font-bold text-white">Visibility</h3>

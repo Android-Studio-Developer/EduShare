@@ -286,7 +286,7 @@ export default function CommunityServerChat({ server, embedded = false, channelI
   }
 
   return (
-    <div style={{ background: server.themeColors?.length === 3 ? `linear-gradient(145deg, #313338 20%, ${server.themeColors[0]}38 65%, ${server.themeColors[2]}2e 100%)` : undefined }} className={`flex h-full min-h-0 flex-col overflow-hidden bg-[#313338] ${embedded ? "rounded-none border-0" : "rounded-2xl border border-black/35"}`}>
+    <div style={{ background: server.themeColors?.length === 3 ? `linear-gradient(145deg, #313338 8%, ${server.themeColors[0]}55 40%, ${server.themeColors[1]}4d 70%, ${server.themeColors[2]}55 100%)` : undefined }} className={`flex h-full min-h-0 flex-col overflow-hidden bg-[#313338] ${embedded ? "rounded-none border-0" : "rounded-2xl border border-black/35"}`}>
       <header className="flex h-[49px] items-center gap-3 border-b border-black/35 bg-[#313338] px-4 shadow-sm shadow-black/20">
         <Hash size={22} className="shrink-0 text-[#80848e]" />
         <div className="min-w-0 flex-1"><h2 className="truncate text-base font-bold text-white">{roomName}</h2></div><span className={`ml-auto flex items-center gap-1 rounded px-2 py-1 text-[10px] ${chatStatus === "online" ? "text-emerald-300/80" : chatStatus === "reconnecting" ? "text-amber-300/80" : "text-red-300/80"}`}>{chatStatus === "online" ? <Wifi size={11}/> : <WifiOff size={11}/>} {chatStatus}</span>

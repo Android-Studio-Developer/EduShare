@@ -1571,9 +1571,8 @@ service cloud.firestore {
         && request.resource.data.themeColors[0].matches('^#[0-9a-fA-F]{6}$')
         && request.resource.data.themeColors[1].matches('^#[0-9a-fA-F]{6}$')
         && request.resource.data.themeColors[2].matches('^#[0-9a-fA-F]{6}$')
-        && (isStaff()
-          || (exists(/databases/$(database)/documents/turboSubscriptions/$(request.auth.uid))
-            && get(/databases/$(database)/documents/turboSubscriptions/$(request.auth.uid)).data.expiresAt > request.time.toMillis()));
+        && exists(/databases/$(database)/documents/turboSubscriptions/$(request.auth.uid))
+        && get(/databases/$(database)/documents/turboSubscriptions/$(request.auth.uid)).data.expiresAt > request.time.toMillis();
       allow update: if request.auth != null
         && !isBanned()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds'])
