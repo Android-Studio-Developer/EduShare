@@ -11,6 +11,7 @@ import { rankTier } from "../lib/ranks";
 import { ensureWallet, subscribeToBalance } from "../lib/shop";
 import type { CommunityEvent, SiteNotification, UserProfile } from "../types";
 import pingSoundUrl from "../pages/discord_ping_sound_effect.mp3";
+import { notificationsAreSilent } from "../lib/notificationPreferences";
 
 interface ToastItem {
   id: string;
@@ -22,7 +23,6 @@ interface ToastItem {
 }
 
 const EVENT_SEEN_PREFIX = "edushare-v4-seen-events:";
-const SILENT_KEY = "edushare-notifications-silent";
 
 function LiquidSurface({ children, className = "" }: { children: ReactNode; className?: string }) {
   return <div className={`v4-liquid-surface ${className}`}>
@@ -86,7 +86,7 @@ export default function V4NotificationCenter({ open, onClose, onUnreadChange }: 
   const audio = useRef<HTMLAudioElement | null>(null);
 
   function playPing() {
-    if (localStorage.getItem(SILENT_KEY) === "1") return;
+    if (notificationsAreSilent()) return;
     void audio.current?.play().catch(() => {});
   }
 

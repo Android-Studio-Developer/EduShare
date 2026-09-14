@@ -5,6 +5,8 @@ import { useAuth } from "../context/AuthContext";
 import { subscribeToCommunityChatServerByInviteCode, joinCommunityChatServer } from "../lib/communityChatServers";
 import { subscribeToAllProfiles, isOnline } from "../lib/profiles";
 import type { CommunityChatServer, UserProfile } from "../types";
+import type { CommunityNotificationLevel } from "../types";
+import { setCommunityNotificationLevel } from "../lib/communityServerPreferences";
 
 function safeText(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value : fallback;
@@ -25,6 +27,7 @@ export default function InviteLanding() {
   const [ready, setReady] = useState(false);
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState("");
+  const [notificationLevel, setNotificationLevelState] = useState<CommunityNotificationLevel>("mentions");
 
   useEffect(() => {
     if (authLoading || !code.trim()) return undefined;
@@ -56,6 +59,7 @@ export default function InviteLanding() {
     try {
       if (server.bannedUserIds?.includes(user.uid)) { setError("You are banned from that server."); return; }
       if (!server.memberIds?.includes(user.uid)) await joinCommunityChatServer(server.id, user.uid);
+      await setCommunityNotificationLevel(server.id, user.uid, notificationLevel);
       navigate(`/chat-servers/${server.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not join this server.");
@@ -90,6 +94,7 @@ export default function InviteLanding() {
               <span className="flex items-center gap-1.5"><Users size={12}/>{memberIds.length.toLocaleString()} members</span>
             </div>
             {error && <p className="mt-3 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</p>}
+            {user && !server.memberIds?.includes(user.uid) && <div className="mt-4 rounded-xl bg-black/20 p-3 text-left"><p className="text-[11px] font-bold uppercase tracking-wide text-white/40">Notify me about</p><div className="mt-2 grid grid-cols-3 gap-1">{(["all", "mentions", "none"] as CommunityNotificationLevel[]).map((level) => <button key={level} type="button" onClick={() => setNotificationLevelState(level)} className={`rounded px-2 py-2 text-[10px] font-bold capitalize ${notificationLevel === level ? "bg-[#5865f2] text-white" : "bg-white/[.06] text-white/45"}`}>{level}</button>)}</div></div>}
             <button
               type="button"
               onClick={() => (user ? void handleJoin() : navigate("/login", { state: { from: { pathname: `/invite/${code}${from ? `?from=${encodeURIComponent(from)}` : ""}` } } }))}

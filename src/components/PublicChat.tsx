@@ -43,6 +43,7 @@ import RankBadge from "./RankBadge";
 import GuildTag from "./GuildTag";
 import { subscribeToGuilds } from "../lib/guilds";
 import { recordDeveloperBotEvent, subscribeToDeveloperBots, verifyWithDeveloperBot } from "../lib/developers";
+import { renderDeveloperBotCommand } from "../lib/eduScript";
 import type { DeveloperBot, Guild } from "../types";
 import MentionInput from "./MentionInput";
 
@@ -546,7 +547,7 @@ export default function PublicChat({ tall = false }: { tall?: boolean }) {
     botRateRef.current.set(rateKey, startedAt);
     const command = bot.commands.find((item) => item.name.toLowerCase() === commandName);
     const reply = command
-      ? command.response.replace(/\{user\}/gi, myName ?? "Member").replace(/\{args\}/gi, args).slice(0, 500)
+      ? renderDeveloperBotCommand(command, myName ?? "Member", args).slice(0, 500)
       : `Unknown command. Try: ${bot.commands.map((item) => item.name).join(", ")}`;
     setText("");
     const queuedNotice = window.setTimeout(() => setFilterMessage("Message queued — reconnecting to chat…"), 4_000);

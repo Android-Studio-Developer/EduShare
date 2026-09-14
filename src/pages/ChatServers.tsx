@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { BadgeCheck, Compass, Crown, Gamepad2, MessageCircle, Plus, Rocket, Search, Sparkles, Users } from "lucide-react";
+import { BadgeCheck, Bell, Bot, Compass, Crown, Gamepad2, MessageCircle, Plus, Rocket, Search, Sparkles, Users, Zap } from "lucide-react";
 import CommunityServerBoostModal from "../components/CommunityServerBoostModal";
 import { useAuth } from "../context/AuthContext";
 import { boostCommunityChatServer, joinCommunityChatServer, subscribeToCommunityChatServers } from "../lib/communityChatServers";
@@ -12,6 +12,11 @@ import { isStaffRole } from "../lib/moderation";
 import { rankTier } from "../lib/ranks";
 import { COMMUNITY_SERVER_BOOST_COST } from "../lib/communityServerBoosts";
 import type { CommunityChatServer, MinecraftServer, UserProfile } from "../types";
+import type { TurboSubscription } from "../types";
+import ServerCard from "../components/ServerCard";
+import { isTurboActive, purchaseTurbo, subscribeToTurbo, TURBO_MONTHLY_COST } from "../lib/turbo";
+import { setCommunityNotificationLevel } from "../lib/communityServerPreferences";
+import type { CommunityNotificationLevel } from "../types";
 
 function safeText(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value : fallback;
@@ -33,11 +38,15 @@ export default function ChatServers() {
   const [notice, setNotice] = useState("");
   const [search, setSearch] = useState("");
   const [boostServerId, setBoostServerId] = useState("");
+  const [view, setView] = useState<"community" | "minecraft">("community");
+  const [turbo, setTurbo] = useState<TurboSubscription | null>(null);
+  const [joinServerId, setJoinServerId] = useState("");
   useEffect(() => subscribeToCommunityChatServers(setServers), []);
   useEffect(() => subscribeToServers(setMinecraftServers), []);
   useEffect(() => subscribeToAllProfiles(setAllProfiles), []);
   useEffect(() => user ? subscribeToProfile(user.uid, setProfile) : undefined, [user]);
   useEffect(() => { if (!user) return; void ensureWallet(user.uid); return subscribeToBalance(user.uid, setBalance); }, [user]);
+  useEffect(() => user ? subscribeToTurbo(user.uid, setTurbo) : undefined, [user]);
 
   const myServers = useMemo(() => user ? servers.filter((server) => server.ownerId === user.uid || server.memberIds?.includes(user.uid)) : [], [servers, user]);
   const publicServers = useMemo(() => servers.filter((server) => server.isPublic !== false), [servers]);
@@ -58,13 +67,14 @@ export default function ChatServers() {
   }
 
   async function boost(server: CommunityChatServer) { if (!user || busyId) return; setBusyId(server.id); setNotice(""); try { await boostCommunityChatServer(server.id, user.uid); setNotice(`${safeText(server.name, "Server")} boosted!`); } catch (error) { setNotice(error instanceof Error ? error.message : "Could not boost this server."); } finally { setBusyId(""); } }
-  async function join(server: CommunityChatServer) {
+  async function join(server: CommunityChatServer, notificationLevel: CommunityNotificationLevel = "mentions") {
     if (!user) { navigate("/login"); return; }
     if (busyId) return;
     if (server.bannedUserIds?.includes(user.uid)) { setNotice("You are banned from that server."); return; }
     setBusyId(server.id); setNotice("");
     try {
       if (!server.memberIds?.includes(user.uid)) await joinCommunityChatServer(server.id, user.uid);
+      await setCommunityNotificationLevel(server.id, user.uid, notificationLevel);
       navigate(`/chat-servers/${server.id}`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Could not join this server.");
@@ -73,8 +83,16 @@ export default function ChatServers() {
     }
   }
 
-  return <div className="-mx-3 -my-5 min-h-[calc(100vh-4rem)] bg-[#313338] text-white sm:-mx-5 sm:-my-8">
-    <div className="grid min-h-[calc(100vh-4rem)] grid-cols-1 md:grid-cols-[72px_260px_minmax(0,1fr)]">
+  async function buyTurbo() {
+    if (!user || busyId) return;
+    setBusyId("turbo"); setNotice("");
+    try { await purchaseTurbo(user.uid); setNotice("Turbo activated for 30 days. Three-color server themes are unlocked."); }
+    catch (error) { setNotice(error instanceof Error ? error.message : "Could not activate Turbo."); }
+    finally { setBusyId(""); }
+  }
+
+  return <div className="fixed inset-0 z-40 overflow-hidden bg-[#313338] text-white">
+    <div className="grid h-screen grid-cols-1 md:grid-cols-[72px_260px_minmax(0,1fr)]">
       <aside className="hidden bg-[#1e1f22] p-3 md:block">
         <button type="button" onClick={() => navigate("/chat-servers")} className="cursor-target grid h-12 w-12 place-items-center rounded-2xl bg-[#5865f2] text-white shadow-lg shadow-black/30"><Compass size={22}/></button>
         <div className="my-3 h-px bg-white/10" />
@@ -90,31 +108,33 @@ export default function ChatServers() {
           <p className="px-2 pb-2 text-xs font-bold uppercase tracking-wide text-white/35">Your servers — {myServers.length}</p>
           {myServers.slice(0, 8).map((server) => <button key={server.id} type="button" onClick={() => navigate(`/chat-servers/${server.id}`)} className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-[15px] font-medium text-[#949ba4] hover:bg-white/[.06] hover:text-[#dbdee1]"><span className="grid h-6 w-6 shrink-0 place-items-center overflow-hidden rounded-full bg-[#1e1f22] text-[10px] font-bold">{server.iconUrl ? <img src={server.iconUrl} alt="" className="h-full w-full object-cover"/> : initial(server.name)}</span><span className="min-w-0 flex-1 truncate">{safeText(server.name, "Server")}</span></button>)}
           {myServers.length === 0 && <p className="px-2 text-xs leading-5 text-white/25">Join a server from the list to see it here.</p>}
-          <p className="mt-4 px-2 pb-2 text-xs font-bold uppercase tracking-wide text-white/35">Browse</p>
-          <button className="flex w-full items-center gap-2 rounded bg-white/10 px-2.5 py-1.5 text-left text-[15px] font-medium text-white"><MessageCircle size={16}/>Community servers</button>
-          <button className="mt-1 flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-[15px] font-medium text-[#949ba4] hover:bg-white/[.06] hover:text-[#dbdee1]"><Rocket size={16}/>Boosted servers</button>
+          <p className="mt-4 px-2 pb-2 text-xs font-bold uppercase tracking-wide text-white/35">Directories</p>
+          <button onClick={() => setView("community")} className={`flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-[15px] font-medium ${view === "community" ? "bg-white/10 text-white" : "text-[#949ba4] hover:bg-white/[.06] hover:text-white"}`}><MessageCircle size={16}/>Chat servers</button>
+          <button onClick={() => setView("minecraft")} className={`mt-1 flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-[15px] font-medium ${view === "minecraft" ? "bg-white/10 text-white" : "text-[#949ba4] hover:bg-white/[.06] hover:text-white"}`}><Gamepad2 size={16}/>Minecraft servers</button>
+          <button onClick={() => navigate("/bot-marketplace")} className="mt-1 flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-[15px] font-medium text-[#949ba4] hover:bg-white/[.06] hover:text-white"><Bot size={16}/>Bot marketplace</button>
           <div className="mt-4 rounded bg-[#1e1f22] px-2.5 py-2">
             <p className="text-[11px] text-white/35">Wallet</p>
             <p className="mt-0.5 text-sm font-bold text-amber-300">{balance} credits</p>
             <p className="text-[11px] text-white/30">Boosts cost {COMMUNITY_SERVER_BOOST_COST}</p>
           </div>
+          <button type="button" onClick={() => void buyTurbo()} disabled={busyId === "turbo"} className="mt-2 w-full rounded bg-gradient-to-r from-fuchsia-500 to-violet-500 px-3 py-2 text-left text-xs font-bold text-white disabled:opacity-50"><Zap size={13} className="mr-1 inline"/>{isTurboActive(turbo) ? `Turbo · until ${new Date(turbo!.expiresAt).toLocaleDateString()}` : `Get Turbo · ${TURBO_MONTHLY_COST}/month`}</button>
         </div>
       </aside>
-      <main className="min-w-0 bg-[#313338]">
+      <main className="min-w-0 overflow-y-auto bg-[#313338]">
         <header className="flex h-[49px] items-center gap-3 border-b border-black/35 px-4 shadow-sm shadow-black/20">
-          <MessageCircle size={21} className="text-[#80848e]"/><h1 className="text-base font-bold text-white">Community Servers</h1>
+          {view === "community" ? <MessageCircle size={21} className="text-[#80848e]"/> : <Gamepad2 size={21} className="text-[#80848e]"/>}<h1 className="text-base font-bold text-white">{view === "community" ? "Community Servers" : "Minecraft Servers"}</h1>
           <div className="ml-auto flex w-72 max-w-[45vw] items-center gap-2 rounded bg-[#1e1f22] px-2.5 py-1.5"><Search size={14} className="text-white/35"/><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search servers" className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/30"/></div>
         </header>
         <div className="p-5">
-          <div className="mb-5 flex items-end justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-wide text-brand-300">Community</p><h2 className="mt-1 text-2xl font-black text-white">Join a server</h2><p className="mt-1 text-sm text-[#b5bac1]">Pick a chat server. Global Chat stays separate.</p></div><span className="text-xs text-white/40"><b className="text-white/75">{ranked.length}</b> listed</span></div>
+          <div className="mb-5 flex items-end justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-wide text-brand-300">{view === "community" ? "Community" : "Minecraft Education"}</p><h2 className="mt-1 text-2xl font-black text-white">{view === "community" ? "Join a chat server" : "Find a Minecraft server"}</h2><p className="mt-1 text-sm text-[#b5bac1]">{view === "community" ? "Private friend spaces with channels, roles, voice, apps, and invites." : "The classic Minecraft directory is back beside your chat servers."}</p></div><span className="text-xs text-white/40"><b className="text-white/75">{view === "community" ? ranked.length : minecraftServers.length}</b> listed</span></div>
           {notice && <p className="mb-4 rounded bg-[#5865f2]/15 px-3 py-2 text-sm text-brand-100">{notice}</p>}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">{ranked.map((server, index) => {
+          {view === "minecraft" ? <div className="grid grid-cols-1 overflow-hidden rounded-xl border border-black/35 sm:grid-cols-2 xl:grid-cols-3">{minecraftServers.filter((server) => !search.trim() || `${server.name} ${server.description}`.toLowerCase().includes(search.toLowerCase())).map((server, index) => <ServerCard key={server.id} server={server} index={index}/>)}</div> : <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">{ranked.map((server, index) => {
             const minecraftServer = server.linkedMinecraftServerId ? minecraftById.get(server.linkedMinecraftServerId) : null;
             const joinCode = minecraftServer?.code?.map(getIcon) ?? [];
             const boosted = index === 0 && (server.boostCount ?? 0) > 0;
             return <article key={server.id} className="group flex flex-col overflow-hidden rounded-xl border border-black/35 bg-[#2b2d31] transition-colors hover:border-white/15">
               <div className="relative aspect-[2/1] w-full overflow-hidden bg-[#1e1f22]">
-                {server.bannerUrl ? <img src={server.bannerUrl} alt="" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"/> : <div className="grid h-full w-full place-items-center bg-gradient-to-br from-[#5865f2]/25 to-[#1e1f22] text-white/15"><MessageCircle size={28}/></div>}
+                {server.bannerUrl ? <img src={server.bannerUrl} alt="" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"/> : <div style={{ background: server.themeColors?.length === 3 ? `linear-gradient(135deg, ${server.themeColors.join(", ")})` : undefined }} className="grid h-full w-full place-items-center bg-gradient-to-br from-[#5865f2]/25 to-[#1e1f22] text-white/15"><MessageCircle size={28}/></div>}
                 {boosted && <span className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-[10px] font-bold text-amber-300 backdrop-blur-sm"><Crown size={11}/>Boosted</span>}
               </div>
               <div className="flex flex-1 flex-col p-4 pt-0">
@@ -130,18 +150,19 @@ export default function ChatServers() {
                   {minecraftServer && <span className={`flex items-center gap-1 ${minecraftServer.isOnline ? "text-emerald-300/75" : "text-white/25"}`}><Gamepad2 size={12}/>{minecraftServer.isOnline ? "MC on" : "MC off"}</span>}
                 </div>
                 <div className="mt-3 flex gap-2">
-                  <button type="button" onClick={() => void join(server)} disabled={busyId === server.id} className="cursor-target flex flex-1 items-center justify-center gap-2 rounded bg-[#5865f2] px-4 py-2 text-sm font-bold text-white hover:bg-[#4752c4] disabled:cursor-wait disabled:opacity-70"><MessageCircle size={14}/>{busyId === server.id ? "Joining…" : "Join"}</button>
+                  <button type="button" onClick={() => server.memberIds?.includes(user?.uid ?? "") ? void join(server) : setJoinServerId(server.id)} disabled={busyId === server.id} className="cursor-target flex flex-1 items-center justify-center gap-2 rounded bg-[#5865f2] px-4 py-2 text-sm font-bold text-white hover:bg-[#4752c4] disabled:cursor-wait disabled:opacity-70"><MessageCircle size={14}/>{busyId === server.id ? "Joining…" : server.memberIds?.includes(user?.uid ?? "") ? "Open" : "Join"}</button>
                   <button type="button" onClick={() => setBoostServerId(server.id)} disabled={!!busyId} title={`View boost perks · ${COMMUNITY_SERVER_BOOST_COST} credits`} className="cursor-target grid h-9 w-9 shrink-0 place-items-center rounded border border-fuchsia-300/20 bg-fuchsia-300/[.07] text-fuchsia-300 hover:bg-fuchsia-300/15 disabled:cursor-not-allowed disabled:opacity-30"><Rocket size={14}/></button>
                 </div>
               </div>
             </article>;
-          })}</div>
-          {ranked.length === 0 && <div className="mt-6 rounded-lg border border-dashed border-white/10 py-20 text-center"><MessageCircle className="mx-auto text-white/20"/><p className="mt-3 text-sm text-white/35">No chat servers yet.</p></div>}
+          })}</div>}
+          {view === "community" && ranked.length === 0 && <div className="mt-6 rounded-lg border border-dashed border-white/10 py-20 text-center"><MessageCircle className="mx-auto text-white/20"/><p className="mt-3 text-sm text-white/35">No chat servers yet.</p></div>}
         </div>
       </main>
     </div>
     {boostServer && (
       <CommunityServerBoostModal server={boostServer} balance={balance} busy={busyId === boostServer.id} onClose={() => setBoostServerId("")} onBoost={() => void boost(boostServer)}/>
     )}
+    {joinServerId && servers.find((item) => item.id === joinServerId) && <div className="fixed inset-0 z-[110] grid place-items-center bg-black/75 p-4" onClick={() => setJoinServerId("")}><section className="w-full max-w-md rounded-2xl bg-[#1e1f22] p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="grid h-14 w-14 place-items-center rounded-2xl bg-[#5865f2]"><MessageCircle/></div><h2 className="mt-4 text-xl font-black">Join {servers.find((item) => item.id === joinServerId)?.name}</h2><p className="mt-2 text-sm text-[#b5bac1]">What do you want to be notified about?</p><div className="mt-5 space-y-2">{([{ level: "all", title: "All messages", copy: "Get an alert for every new message." }, { level: "mentions", title: "Only @mentions", copy: "Recommended — replies and pings only." }, { level: "none", title: "Nothing", copy: "Join quietly with no server alerts." }] as { level: CommunityNotificationLevel; title: string; copy: string }[]).map((option) => <button key={option.level} type="button" onClick={() => { const server = servers.find((item) => item.id === joinServerId); setJoinServerId(""); if (server) void join(server, option.level); }} className="flex w-full items-center gap-3 rounded-xl border border-white/10 bg-[#2b2d31] p-4 text-left hover:border-[#5865f2] hover:bg-[#35373c]"><Bell size={18} className="text-[#b5bac1]"/><span><b className="block text-sm text-white">{option.title}</b><span className="mt-1 block text-xs text-[#949ba4]">{option.copy}</span></span></button>)}</div></section></div>}
   </div>;
 }

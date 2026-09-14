@@ -1,4 +1,4 @@
-import type { DeveloperBotCommand } from "../types";
+import type { DeveloperBotCommand, DeveloperBotCondition } from "../types";
 
 export interface EduScriptResult {
   commands: DeveloperBotCommand[];
@@ -23,6 +23,9 @@ const outputVariablePattern = /^(?:return|reply|say|send)\s+([a-z_][a-z0-9_]*)\s
 const embedPattern = /^embed\s+f?(["'])(.*)\1\s*$/i;
 const buttonPattern = /^button\s+f?(["'])(.*)\1\s*$/i;
 const authenticatePattern = /^(?:authenticate|verify)\s+user\s*$/i;
+const conditionPattern = /^(if|elif)\s+args\s*(==|contains|starts_with)\s*(["'])(.*)\3\s*:\s*$/i;
+const emptyConditionPattern = /^if\s+(not\s+)?args\s*:\s*$/i;
+const elsePattern = /^else\s*:\s*$/i;
 
 export const eduScriptTemplates: EduScriptTemplate[] = [
   {
@@ -57,6 +60,18 @@ command help:
     embed "🛠️ Support request"
     say "{user} needs help with: {args}"
     button "Staff will reply soon"`,
+  },
+  {
+    id: "smart-helper",
+    name: "Smart if / else helper",
+    description: "Give a different answer based on what the member types.",
+    source: `command help:
+    if args == "rules":
+        say "Read #rules before chatting."
+    elif args contains "join":
+        say "Ask an admin for the current Minecraft join code."
+    else:
+        say "Try: help rules or help join"`,
   },
 ];
 
@@ -121,6 +136,8 @@ export function compileEduScript(source: string): EduScriptResult {
 
     const variables = new Map<string, string>();
     let response = "";
+    const conditions: DeveloperBotCondition[] = [];
+    let activeCondition: DeveloperBotCondition | null = null;
     let action: DeveloperBotCommand["action"] = verificationDecoratorLine ? "verify" : "reply";
     let lastBlockIndex = blockIndex;
     let ended = false;
@@ -135,6 +152,24 @@ export function compileEduScript(source: string): EduScriptResult {
       if (!/^\s+/.test(blockRaw)) break;
       lastBlockIndex = blockIndex;
 
+      const conditionMatch = blockLine.match(conditionPattern);
+      if (conditionMatch) {
+        const operator = conditionMatch[2].toLowerCase() === "==" ? "equals" : conditionMatch[2].toLowerCase() as DeveloperBotCondition["operator"];
+        activeCondition = { operator, value: decodeString(conditionMatch[4]), response: "" };
+        conditions.push(activeCondition);
+        continue;
+      }
+      const emptyMatch = blockLine.match(emptyConditionPattern);
+      if (emptyMatch) {
+        activeCondition = { operator: emptyMatch[1] ? "empty" : "not_empty", value: "", response: "" };
+        conditions.push(activeCondition);
+        continue;
+      }
+      if (elsePattern.test(blockLine)) {
+        activeCondition = null;
+        continue;
+      }
+
       const assignmentMatch = blockLine.match(assignmentPattern);
       if (assignmentMatch) {
         variables.set(assignmentMatch[1].toLowerCase(), decodeString(assignmentMatch[3]));
@@ -148,20 +183,26 @@ export function compileEduScript(source: string): EduScriptResult {
 
       const embedMatch = blockLine.match(embedPattern);
       if (embedMatch) {
-        response = appendLine(response, `**${decodeString(embedMatch[2])}**`);
+        const next = `**${decodeString(embedMatch[2])}**`;
+        if (activeCondition) activeCondition.response = appendLine(activeCondition.response, next);
+        else response = appendLine(response, next);
         continue;
       }
 
       const buttonMatch = blockLine.match(buttonPattern);
       if (buttonMatch) {
-        response = appendLine(response, `▸ ${decodeString(buttonMatch[2])}`);
+        const next = `▸ ${decodeString(buttonMatch[2])}`;
+        if (activeCondition) activeCondition.response = appendLine(activeCondition.response, next);
+        else response = appendLine(response, next);
         continue;
       }
 
       const outputMatch = blockLine.match(outputPattern);
       if (outputMatch) {
-        response = appendLine(response, decodeString(outputMatch[2]));
-        ended = blockLine.toLowerCase().startsWith("return");
+        const next = decodeString(outputMatch[2]);
+        if (activeCondition) activeCondition.response = appendLine(activeCondition.response, next);
+        else response = appendLine(response, next);
+        ended = blockLine.toLowerCase().startsWith("return") && !activeCondition;
         if (ended) break;
         continue;
       }
@@ -169,21 +210,25 @@ export function compileEduScript(source: string): EduScriptResult {
       const outputVariableMatch = blockLine.match(outputVariablePattern);
       if (outputVariableMatch) {
         const value = variables.get(outputVariableMatch[1].toLowerCase());
-        if (typeof value === "string") response = appendLine(response, value);
+        if (typeof value === "string") {
+          if (activeCondition) activeCondition.response = appendLine(activeCondition.response, value);
+          else response = appendLine(response, value);
+        }
         else errors.push(`Line ${blockIndex + 1}: "${outputVariableMatch[1]}" was not assigned a string.`);
-        ended = blockLine.toLowerCase().startsWith("return");
+        ended = blockLine.toLowerCase().startsWith("return") && !activeCondition;
         if (ended) break;
         continue;
       }
 
-      errors.push(`Line ${blockIndex + 1}: expected say "text", embed "title", button "label", authenticate user, let name = "text", or return "text".`);
+      errors.push(`Line ${blockIndex + 1}: expected if/elif/else, say "text", embed "title", button "label", authenticate user, let name = "text", or return "text".`);
     }
 
-    if (!response && !errors.some((error) => error.startsWith(`Line ${lineNumber}:`))) errors.push(`Line ${lastBlockIndex + 1}: add a say/reply/return for this command.`);
-    if (!response.trim()) errors.push(`Line ${lastBlockIndex + 1}: the reply cannot be empty.`);
-    if (response.length > 300) errors.push(`Line ${lastBlockIndex + 1}: reply is longer than 300 characters.`);
+    const validConditions = conditions.filter((condition) => condition.response.trim());
+    if (!response && !validConditions.length && !errors.some((error) => error.startsWith(`Line ${lineNumber}:`))) errors.push(`Line ${lastBlockIndex + 1}: add a say/reply/return for this command.`);
+    if (conditions.some((condition) => !condition.response.trim())) errors.push(`Line ${lastBlockIndex + 1}: every if/elif branch needs a reply.`);
+    if (response.length > 300 || validConditions.some((condition) => condition.response.length > 300)) errors.push(`Line ${lastBlockIndex + 1}: each reply must be 300 characters or shorter.`);
     if (commands.some((command) => command.name === name)) errors.push(`Line ${lineNumber}: "${name}" is already defined.`);
-    if (response.trim() && response.length <= 300 && !commands.some((command) => command.name === name)) commands.push({ name, response, action });
+    if ((response.trim() || validConditions.length) && response.length <= 300 && !commands.some((command) => command.name === name)) commands.push({ name, response, action, ...(validConditions.length ? { conditions: validConditions } : {}) });
     verificationDecoratorLine = 0;
     index = Math.max(index, ended ? blockIndex : lastBlockIndex);
   }
@@ -194,5 +239,34 @@ export function compileEduScript(source: string): EduScriptResult {
 }
 
 export function commandsToEduScript(commands: DeveloperBotCommand[]) {
-  return commands.map((command) => `${command.action === "verify" ? "@verify\n" : ""}command ${command.name}:\n    say "${encodeString(command.response)}"`).join("\n\n");
+  return commands.map((command) => {
+    const lines = [`${command.action === "verify" ? "@verify\n" : ""}command ${command.name}:`];
+    (command.conditions ?? []).forEach((condition, index) => {
+      const keyword = index === 0 ? "if" : "elif";
+      if (condition.operator === "empty") lines.push(`    if not args:`);
+      else if (condition.operator === "not_empty") lines.push(`    if args:`);
+      else lines.push(`    ${keyword} args ${condition.operator === "equals" ? "==" : condition.operator} "${encodeString(condition.value)}":`);
+      lines.push(`        say "${encodeString(condition.response)}"`);
+    });
+    if (command.conditions?.length) {
+      if (command.response) lines.push(`    else:`, `        say "${encodeString(command.response)}"`);
+    } else lines.push(`    say "${encodeString(command.response)}"`);
+    return lines.join("\n");
+  }).join("\n\n");
+}
+
+export function renderDeveloperBotCommand(command: DeveloperBotCommand, user: string, args: string) {
+  const input = args.trim();
+  const lower = input.toLowerCase();
+  const match = (command.conditions ?? []).find((condition) => {
+    const expected = condition.value.trim().toLowerCase();
+    if (condition.operator === "empty") return !input;
+    if (condition.operator === "not_empty") return !!input;
+    if (condition.operator === "contains") return lower.includes(expected);
+    if (condition.operator === "starts_with") return lower.startsWith(expected);
+    return lower === expected;
+  });
+  return (match?.response || command.response || "I don't have a response for that yet.")
+    .replace(/\{user\}/gi, user)
+    .replace(/\{args\}/gi, input || "nothing");
 }

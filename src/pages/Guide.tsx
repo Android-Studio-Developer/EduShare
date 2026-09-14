@@ -88,10 +88,14 @@ export default function Guide() {
       </Section>
 
       <Section title="Developer bots & EduPy">
-        <p>Developer Portal bots run in Global Chat with <code>@bot command args</code>, <code>/bot command args</code>, or the bot's prefix. EduPy is a safe Python-style language: define a command, optionally make a string variable, then return a reply.</p>
-        <pre className="overflow-x-auto rounded-2xl border border-border bg-black/30 p-4 text-xs leading-6 text-white/70"><code>{`def hello(user, args):
-    reply = f"Hey {user}, you said {args}"
-    return reply
+        <p>Developer Portal bots run in Global Chat and in servers where an owner installed them from the Bot Marketplace. Use <code>@bot command args</code> or <code>/bot command args</code>. EduPy supports Python-shaped <code>if</code>, <code>elif</code>, and <code>else</code> branches without running unsafe arbitrary code.</p>
+        <pre className="overflow-x-auto rounded-2xl border border-border bg-black/30 p-4 text-xs leading-6 text-white/70"><code>{`command help:
+    if args == "rules":
+        say "Read #rules first."
+    elif args contains "join":
+        say "Ask staff for the join code."
+    else:
+        say "Try: help rules or help join"
 
 @verify
 def verify(user, args):

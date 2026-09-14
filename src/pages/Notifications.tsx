@@ -5,14 +5,13 @@ import { useAuth } from "../context/AuthContext";
 import { markNotificationRead, subscribeToNotifications } from "../lib/notifications";
 import { markShopNotificationRead, subscribeToShopNotifications } from "../lib/shop";
 import type { ShopNotification, SiteNotification } from "../types";
-
-const SILENT_KEY = "edushare-notifications-silent";
+import { notificationsAreSilent, setNotificationsSilent } from "../lib/notificationPreferences";
 
 export default function Notifications() {
   const { user } = useAuth();
   const [general, setGeneral] = useState<SiteNotification[]>([]);
   const [shops, setShops] = useState<ShopNotification[]>([]);
-  const [silent, setSilent] = useState(() => localStorage.getItem(SILENT_KEY) === "1");
+  const [silent, setSilent] = useState(notificationsAreSilent);
   const [permission, setPermission] = useState<NotificationPermission>(() => "Notification" in window ? Notification.permission : "denied");
   useEffect(() => user ? subscribeToNotifications(user.uid, setGeneral) : undefined, [user]);
   useEffect(() => user ? subscribeToShopNotifications(user.uid, setShops) : undefined, [user]);
@@ -21,7 +20,7 @@ export default function Notifications() {
   function toggleSilent() {
     const next = !silent;
     setSilent(next);
-    localStorage.setItem(SILENT_KEY, next ? "1" : "0");
+    setNotificationsSilent(next);
   }
   async function enableBrowserNotifications() {
     if (!("Notification" in window)) return;

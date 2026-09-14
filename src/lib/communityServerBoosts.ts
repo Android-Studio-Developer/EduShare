@@ -60,6 +60,8 @@ export const COMMUNITY_SERVER_BOOST_LEVELS: CommunityServerBoostLevel[] = [
 export const COMMUNITY_SERVER_EXTRA_PERKS = [
   { boosts: 3, title: "Server tag", description: "A short server tag members can show on their profiles." },
   { boosts: 3, title: "Enhanced role styles", description: "Gradient and holographic role colors." },
+  { boosts: 3, title: "Game server hosting", description: "A shared hosting perk for supported community games." },
+  { boosts: 5, title: "Larger server uploads", description: "Upload server files up to 250 MB." },
 ];
 
 export function communityServerBoostProgress(boostCount = 0) {

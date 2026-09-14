@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Activity, AlertTriangle, BarChart3, Bug, CheckCircle2, FlaskConical, Gauge, History, ShieldCheck } from "lucide-react";
 import { subscribeToDeveloperBotEvents } from "../lib/developers";
+import { renderDeveloperBotCommand } from "../lib/eduScript";
 import type { DeveloperBot, DeveloperBotEvent } from "../types";
 
 function formatTime(value: number) {
@@ -28,12 +29,12 @@ export default function DeveloperDebugger({ bot, userName }: { bot: DeveloperBot
     { label: "Unique mention handle", ok: /^[a-z0-9_]{1,24}$/.test(bot.handle) },
     { label: "Avatar configured", ok: /^https:\/\//.test(bot.avatarUrl) },
     { label: "Description explains its purpose", ok: bot.description.length >= 20 },
-    { label: "Every command has a response", ok: bot.commands.length > 0 && bot.commands.every((command) => command.name && command.response) },
+    { label: "Every command has a response", ok: bot.commands.length > 0 && bot.commands.every((command) => command.name && (command.response || command.conditions?.some((condition) => condition.response))) },
   ];
 
   function runSandbox() {
     const command = bot.commands.find((item) => item.name === testCommand);
-    setPreview(command ? command.response.replace(/\{user\}/gi, userName).replace(/\{args\}/gi, testArgs) : "Unknown command.");
+    setPreview(command ? renderDeveloperBotCommand(command, userName, testArgs) : "Unknown command.");
   }
 
   return <section className="mt-5 overflow-hidden rounded-2xl border border-violet-400/15 bg-[#11151d]/90">

@@ -1,6 +1,6 @@
 import { addDoc, arrayUnion, collection, deleteDoc, doc, getDocs, increment, limit, onSnapshot, orderBy, query, runTransaction, updateDoc, where, writeBatch } from "firebase/firestore";
 import { db } from "./firebase";
-import type { ChatMessage, CommunityChatServer, Rank } from "../types";
+import type { ChatMessage, CommunityChatServer, DeveloperBot, Rank } from "../types";
 import { COMMUNITY_SERVER_BOOST_COST } from "./communityServerBoosts";
 
 const serversRef = collection(db, "communityChatServers");
@@ -31,6 +31,8 @@ function withServerDefaults(id: string, data: Record<string, unknown>): Communit
     roles: typeof data.roles === "object" && data.roles !== null ? data.roles as CommunityChatServer["roles"] : ownerId ? { [ownerId]: "owner" } : {},
     textChannels: Array.isArray(data.textChannels) && data.textChannels.length ? data.textChannels as CommunityChatServer["textChannels"] : DEFAULT_TEXT_CHANNELS,
     voiceChannels: Array.isArray(data.voiceChannels) && data.voiceChannels.length ? data.voiceChannels as CommunityChatServer["voiceChannels"] : DEFAULT_VOICE_CHANNELS,
+    botIds: Array.isArray(data.botIds) ? data.botIds.filter((item): item is string => typeof item === "string") : [],
+    themeColors: Array.isArray(data.themeColors) ? data.themeColors.filter((item): item is string => typeof item === "string").slice(0, 3) : [],
     isPublic: typeof data.isPublic === "boolean" ? data.isPublic : true,
     uploadCount: typeof data.uploadCount === "number" ? data.uploadCount : 0,
     ...data,
@@ -67,6 +69,8 @@ export function createCommunityChatServer(input: Pick<CommunityChatServer, "name
     roles: input.roles ?? { [input.ownerId]: "owner" },
     textChannels: input.textChannels ?? DEFAULT_TEXT_CHANNELS,
     voiceChannels: input.voiceChannels ?? DEFAULT_VOICE_CHANNELS,
+    botIds: input.botIds ?? [],
+    themeColors: input.themeColors ?? [],
     isPublic: input.isPublic ?? true,
     uploadCount: input.uploadCount ?? 0,
     createdAt: Date.now(),
@@ -89,7 +93,7 @@ export async function boostCommunityChatServer(serverId: string, userId: string)
   });
 }
 
-export function updateCommunityChatServer(serverId: string, input: Partial<Pick<CommunityChatServer, "name" | "description" | "rules" | "iconUrl" | "bannerUrl" | "linkedMinecraftServerId" | "memberIds" | "bannedUserIds" | "bannedUsernames" | "roles" | "textChannels" | "voiceChannels" | "isPublic">>) {
+export function updateCommunityChatServer(serverId: string, input: Partial<Pick<CommunityChatServer, "name" | "description" | "rules" | "iconUrl" | "bannerUrl" | "linkedMinecraftServerId" | "memberIds" | "bannedUserIds" | "bannedUsernames" | "roles" | "textChannels" | "voiceChannels" | "botIds" | "themeColors" | "isPublic">>) {
   return updateDoc(doc(db, "communityChatServers", serverId), input);
 }
 
@@ -133,6 +137,9 @@ export function subscribeToCommunityChatMessages(serverId: string, callback: (me
         authorName: typeof data.authorName === "string" && data.authorName ? data.authorName : "Unknown member",
         authorRank: typeof data.authorRank === "string" ? data.authorRank : "none",
         authorPhotoUrl: typeof data.authorPhotoUrl === "string" ? data.authorPhotoUrl : "",
+        isBot: data.isBot === true,
+        botId: typeof data.botId === "string" ? data.botId : undefined,
+        triggeredById: typeof data.triggeredById === "string" ? data.triggeredById : undefined,
         replyToId: typeof data.replyToId === "string" ? data.replyToId : undefined,
         replyToAuthorId: typeof data.replyToAuthorId === "string" ? data.replyToAuthorId : undefined,
         replyToAuthor: typeof data.replyToAuthor === "string" ? data.replyToAuthor : undefined,
@@ -143,6 +150,20 @@ export function subscribeToCommunityChatMessages(serverId: string, callback: (me
       } as ChatMessage;
     }));
   }, onError);
+}
+
+export function sendCommunityBotMessage(serverId: string, triggeredById: string, bot: DeveloperBot, text: string, channelId = "general") {
+  return addDoc(messagesRef(serverId, channelId), {
+    authorId: bot.id,
+    authorName: bot.name,
+    authorRank: "none",
+    authorPhotoUrl: bot.avatarUrl || "",
+    text: text.slice(0, 500),
+    isBot: true,
+    botId: bot.id,
+    triggeredById,
+    createdAt: Date.now(),
+  });
 }
 
 export function sendCommunityChatMessage(serverId: string, authorId: string, authorName: string, authorRank: Rank, authorPhotoUrl: string, text: string, replyTo?: { id: string; authorId: string; author: string; text: string; ping: boolean }, channelId = "general") {

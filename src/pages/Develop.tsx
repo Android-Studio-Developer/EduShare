@@ -73,7 +73,7 @@ function BotEditor({ bot, onSaved, onDeleted }: { bot: DeveloperBot; onSaved: (b
       ? { ...draft, commands: compiled.commands, verificationEnabled: compiled.commands.some((command) => command.action === "verify") }
       : { ...draft, verificationEnabled: draft.commands.some((command) => command.action === "verify") };
     if (!prepared.name.trim() || !prepared.handle.trim()) return setNotice("Bot name and handle are required.");
-    if (!prepared.commands.some((command) => command.name.trim() && command.response.trim())) return setNotice("Add at least one complete command.");
+    if (!prepared.commands.some((command) => command.name.trim() && (command.response.trim() || command.conditions?.some((condition) => condition.response.trim())))) return setNotice("Add at least one complete command.");
     setSaving(true); setNotice("");
     try { await updateDeveloperBot(bot, prepared); setDraft(prepared); localStorage.removeItem(`edushare-bot-draft:${bot.id}`); onSaved(prepared); setNotice("Changes saved."); }
     catch (error) { setNotice(error instanceof Error ? error.message : "Could not save the bot."); }

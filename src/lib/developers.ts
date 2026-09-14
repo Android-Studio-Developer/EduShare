@@ -19,8 +19,13 @@ const cleanCommands = (commands: DeveloperBotCommand[]) => commands
     name: command.name.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 24),
     response: command.response.trim().slice(0, 300),
     action: command.action === "verify" ? "verify" as const : "reply" as const,
+    conditions: (command.conditions ?? []).map((condition) => ({
+      operator: condition.operator,
+      value: condition.value.trim().slice(0, 100),
+      response: condition.response.trim().slice(0, 300),
+    })).filter((condition) => condition.response).slice(0, 8),
   }))
-  .filter((command, index, items) => command.name && command.response && items.findIndex((item) => item.name === command.name) === index)
+  .filter((command, index, items) => command.name && (command.response || command.conditions.length) && items.findIndex((item) => item.name === command.name) === index)
   .slice(0, 12);
 
 const BOT_WRITE_TIMEOUT_MS = 15_000;

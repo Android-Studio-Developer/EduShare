@@ -69,6 +69,7 @@ const Recover = lazy(() => import("./pages/Recover"));
 const Develop = lazy(() => import("./pages/Develop"));
 const Fun = lazy(() => import("./pages/Fun"));
 const InviteLanding = lazy(() => import("./pages/InviteLanding"));
+const BotMarketplace = lazy(() => import("./pages/BotMarketplace"));
 
 const UNLOCK_KEY = "edushare-site-gate-v2";
 
@@ -109,6 +110,7 @@ function AppContent() {
       <Route path="/chat/servers/:serverId" element={<ProtectedRoute><ChatRoomBoundary roomName="Server panel" resetKey={location.pathname + location.search}><CommunityServer /></ChatRoomBoundary></ProtectedRoute>} />
       <Route path="/chat-servers" element={<ProtectedRoute><ChatServers /></ProtectedRoute>} />
       <Route path="/chat-servers/:serverId" element={<ProtectedRoute><ChatRoomBoundary roomName="Server panel" resetKey={location.pathname + location.search}><CommunityServer /></ChatRoomBoundary></ProtectedRoute>} />
+      <Route path="/bot-marketplace" element={<ProtectedRoute><BotMarketplace /></ProtectedRoute>} />
       <Route path="/invite/:code" element={<ChatRoomBoundary roomName="Invite"><InviteLanding /></ChatRoomBoundary>} />
       <Route path="/voice" element={<ProtectedRoute><Voice /></ProtectedRoute>} />
       <Route path="/voice-lab" element={<ProtectedRoute><VoiceLab /></ProtectedRoute>} />
@@ -155,7 +157,7 @@ function AppContent() {
     return body;
   }
 
-  if (location.pathname.startsWith("/chat-servers/") || location.pathname.startsWith("/chat/servers/")) {
+  if (location.pathname === "/chat-servers" || location.pathname === "/bot-marketplace" || location.pathname.startsWith("/chat-servers/") || location.pathname.startsWith("/chat/servers/")) {
     return body;
   }
 

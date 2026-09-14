@@ -4,6 +4,7 @@ import { useAuth } from "../context/AuthContext";
 import { subscribeToNotifications } from "../lib/notifications";
 import type { SiteNotification } from "../types";
 import pingSoundUrl from "../pages/discord_ping_sound_effect.mp3";
+import { notificationsAreSilent } from "../lib/notificationPreferences";
 
 // Plays the Discord-style ping sound app-wide the moment a new notification
 // lands — a chat mention, a DM, a donation, a server coming online — no
@@ -31,7 +32,7 @@ export default function NotificationSound() {
       const fresh = notifications.find((n) => !seenIdsRef.current!.has(n.id) && !n.read);
       notifications.forEach((n) => seenIdsRef.current!.add(n.id));
       if (!fresh) return;
-      void audioRef.current?.play().catch(() => {});
+      if (!notificationsAreSilent()) void audioRef.current?.play().catch(() => {});
       if ("Notification" in window && Notification.permission === "granted" && document.hidden) {
         const notification = new Notification(fresh.title, {
           body: fresh.message,

@@ -392,6 +392,32 @@ service cloud.firestore {
       allow delete: if isOwner() || (request.auth != null && request.auth.uid == userId);
     }
 
+    match /turboSubscriptions/{userId} {
+      allow read: if request.auth != null && (request.auth.uid == userId || isStaff());
+      allow create: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.data.userId == userId
+        && request.resource.data.purchasedAt is int
+        && request.resource.data.expiresAt == request.resource.data.purchasedAt + 2592000000
+        && request.resource.data.purchasedAt <= request.time.toMillis()
+        && request.resource.data.purchasedAt >= request.time.toMillis() - 60000
+        && getAfter(/databases/$(database)/documents/wallets/$(userId)).data.balance
+          == get(/databases/$(database)/documents/wallets/$(userId)).data.balance - 200;
+      allow update: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.data.userId == userId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['purchasedAt', 'expiresAt'])
+        && request.resource.data.purchasedAt is int
+        && request.resource.data.purchasedAt <= request.time.toMillis()
+        && request.resource.data.purchasedAt >= request.time.toMillis() - 60000
+        && request.resource.data.expiresAt > resource.data.expiresAt
+        && (request.resource.data.expiresAt == resource.data.expiresAt + 2592000000
+          || request.resource.data.expiresAt == request.resource.data.purchasedAt + 2592000000)
+        && getAfter(/databases/$(database)/documents/wallets/$(userId)).data.balance
+          == get(/databases/$(database)/documents/wallets/$(userId)).data.balance - 200;
+      allow delete: if false;
+    }
+
     match /parties/{partyId} {
       allow read: if true;
 
@@ -1492,6 +1518,10 @@ service cloud.firestore {
         && request.resource.data.textChannels.size() <= 12
         && request.resource.data.voiceChannels is list
         && request.resource.data.voiceChannels.size() <= 12
+        && request.resource.data.botIds is list
+        && request.resource.data.botIds.size() == 0
+        && request.resource.data.themeColors is list
+        && request.resource.data.themeColors.size() == 0
         && request.resource.data.boostCount == 0
         && request.resource.data.lastBoostedAt == 0
         && (!('isPublic' in request.resource.data) || request.resource.data.isPublic is bool)
@@ -1500,7 +1530,7 @@ service cloud.firestore {
         && request.resource.data.createdAt <= request.time.toMillis();
       allow update: if request.auth != null
         && (resource.data.ownerId == request.auth.uid || isStaff())
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'description', 'rules', 'iconUrl', 'bannerUrl', 'linkedMinecraftServerId', 'memberIds', 'bannedUserIds', 'bannedUsernames', 'roles', 'textChannels', 'voiceChannels', 'isPublic'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'description', 'rules', 'iconUrl', 'bannerUrl', 'linkedMinecraftServerId', 'memberIds', 'bannedUserIds', 'bannedUsernames', 'roles', 'textChannels', 'voiceChannels', 'botIds', 'isPublic'])
         && (!('isPublic' in request.resource.data) || request.resource.data.isPublic is bool)
         && (!('name' in request.resource.data) || (request.resource.data.name is string
           && request.resource.data.name.size() >= 3
@@ -1530,7 +1560,20 @@ service cloud.firestore {
           && request.resource.data.textChannels.size() >= 1
           && request.resource.data.textChannels.size() <= 12))
         && (!('voiceChannels' in request.resource.data) || (request.resource.data.voiceChannels is list
-          && request.resource.data.voiceChannels.size() <= 12));
+          && request.resource.data.voiceChannels.size() <= 12))
+        && (!('botIds' in request.resource.data) || (request.resource.data.botIds is list
+          && request.resource.data.botIds.size() <= 12));
+      allow update: if request.auth != null
+        && (resource.data.ownerId == request.auth.uid || isStaff())
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['themeColors'])
+        && request.resource.data.themeColors is list
+        && request.resource.data.themeColors.size() == 3
+        && request.resource.data.themeColors[0].matches('^#[0-9a-fA-F]{6}$')
+        && request.resource.data.themeColors[1].matches('^#[0-9a-fA-F]{6}$')
+        && request.resource.data.themeColors[2].matches('^#[0-9a-fA-F]{6}$')
+        && (isStaff()
+          || (exists(/databases/$(database)/documents/turboSubscriptions/$(request.auth.uid))
+            && get(/databases/$(database)/documents/turboSubscriptions/$(request.auth.uid)).data.expiresAt > request.time.toMillis()));
       allow update: if request.auth != null
         && !isBanned()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds'])
@@ -1578,6 +1621,26 @@ service cloud.firestore {
           && request.resource.data.text.size() <= 300
           && request.resource.data.createdAt is int
           && request.resource.data.createdAt <= request.time.toMillis();
+        allow create: if request.auth != null
+          && !isBanned()
+          && request.resource.data.isBot == true
+          && request.resource.data.triggeredById == request.auth.uid
+          && request.resource.data.botId is string
+          && request.resource.data.authorId == request.resource.data.botId
+          && request.auth.uid in get(/databases/$(database)/documents/communityChatServers/$(serverId)).data.memberIds
+          && (!(('bannedUserIds' in get(/databases/$(database)/documents/communityChatServers/$(serverId)).data))
+            || !(request.auth.uid in get(/databases/$(database)/documents/communityChatServers/$(serverId)).data.bannedUserIds))
+          && request.resource.data.botId in get(/databases/$(database)/documents/communityChatServers/$(serverId)).data.botIds
+          && exists(/databases/$(database)/documents/developerBots/$(request.resource.data.botId))
+          && get(/databases/$(database)/documents/developerBots/$(request.resource.data.botId)).data.enabled == true
+          && request.resource.data.authorName == get(/databases/$(database)/documents/developerBots/$(request.resource.data.botId)).data.name
+          && request.resource.data.authorPhotoUrl == get(/databases/$(database)/documents/developerBots/$(request.resource.data.botId)).data.avatarUrl
+          && request.resource.data.authorRank == 'none'
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 500
+          && request.resource.data.createdAt is int
+          && request.resource.data.createdAt <= request.time.toMillis();
         allow update: if false;
         allow delete: if request.auth != null
           && (resource.data.authorId == request.auth.uid
@@ -1607,11 +1670,43 @@ service cloud.firestore {
           && request.resource.data.text.size() <= 300
           && request.resource.data.createdAt is int
           && request.resource.data.createdAt <= request.time.toMillis();
+        allow create: if request.auth != null
+          && !isBanned()
+          && request.resource.data.isBot == true
+          && request.resource.data.triggeredById == request.auth.uid
+          && request.resource.data.botId is string
+          && request.resource.data.authorId == request.resource.data.botId
+          && request.auth.uid in get(/databases/$(database)/documents/communityChatServers/$(serverId)).data.memberIds
+          && (!(('bannedUserIds' in get(/databases/$(database)/documents/communityChatServers/$(serverId)).data))
+            || !(request.auth.uid in get(/databases/$(database)/documents/communityChatServers/$(serverId)).data.bannedUserIds))
+          && request.resource.data.botId in get(/databases/$(database)/documents/communityChatServers/$(serverId)).data.botIds
+          && exists(/databases/$(database)/documents/developerBots/$(request.resource.data.botId))
+          && get(/databases/$(database)/documents/developerBots/$(request.resource.data.botId)).data.enabled == true
+          && request.resource.data.authorName == get(/databases/$(database)/documents/developerBots/$(request.resource.data.botId)).data.name
+          && request.resource.data.authorPhotoUrl == get(/databases/$(database)/documents/developerBots/$(request.resource.data.botId)).data.avatarUrl
+          && request.resource.data.authorRank == 'none'
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 500
+          && request.resource.data.createdAt is int
+          && request.resource.data.createdAt <= request.time.toMillis();
         allow update: if false;
         allow delete: if request.auth != null
           && (resource.data.authorId == request.auth.uid
               || get(/databases/$(database)/documents/communityChatServers/$(serverId)).data.ownerId == request.auth.uid
               || isStaff());
+      }
+
+      match /notificationPreferences/{userId} {
+        allow read: if request.auth != null
+          && request.auth.uid in get(/databases/$(database)/documents/communityChatServers/$(serverId)).data.memberIds;
+        allow create, update: if request.auth != null
+          && request.auth.uid == userId
+          && request.resource.data.userId == userId
+          && request.resource.data.level in ['all', 'mentions', 'none']
+          && request.resource.data.updatedAt is int
+          && request.resource.data.updatedAt <= request.time.toMillis();
+        allow delete: if request.auth != null && (request.auth.uid == userId || isStaff());
       }
     }
 

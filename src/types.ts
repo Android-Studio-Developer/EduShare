@@ -104,6 +104,13 @@ export interface DeveloperBotCommand {
   name: string;
   response: string;
   action?: "reply" | "verify";
+  conditions?: DeveloperBotCondition[];
+}
+
+export interface DeveloperBotCondition {
+  operator: "equals" | "contains" | "starts_with" | "empty" | "not_empty";
+  value: string;
+  response: string;
 }
 
 export interface DeveloperBot {
@@ -188,12 +195,23 @@ export interface CommunityChatServer {
   roles: Record<string, CommunityServerRole>;
   textChannels: CommunityServerTextChannel[];
   voiceChannels: CommunityServerVoiceChannel[];
+  botIds: string[];
+  themeColors: string[];
   boostCount: number;
   lastBoostedAt: number;
   createdAt: number;
   isPublic?: boolean;
   uploadCount?: number;
 }
+
+export interface TurboSubscription {
+  id: string;
+  userId: string;
+  purchasedAt: number;
+  expiresAt: number;
+}
+
+export type CommunityNotificationLevel = "all" | "mentions" | "none";
 
 export interface DmMessage {
   id: string;

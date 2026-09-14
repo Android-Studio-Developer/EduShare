@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Ban, Copy, Crown, Globe2, Hash, Lock, Mic, MicOff, Plus, Server, Settings, ShieldCheck, UserMinus, Users, Volume2, X } from "lucide-react";
+import { ArrowLeft, Ban, Bell, Bot, Copy, Crown, Globe2, Hash, Lock, Mic, MicOff, Plus, Server, Settings, ShieldCheck, UserMinus, Users, Volume2, X, Zap } from "lucide-react";
 import CommunityServerChat from "../components/CommunityServerChat";
 import ProfileCard from "../components/ProfileCard";
 import StatusDot from "../components/StatusDot";
@@ -12,7 +12,9 @@ import { subscribeToServers } from "../lib/servers";
 import { getIcon } from "../lib/icons";
 import { isStaffRole } from "../lib/moderation";
 import { ensureCommunityVoiceChannel } from "../lib/voice";
-import type { CommunityChatServer, CommunityServerRole, MinecraftServer, UserProfile } from "../types";
+import { isTurboActive, subscribeToTurbo } from "../lib/turbo";
+import { setCommunityNotificationLevel, subscribeToCommunityNotificationLevel } from "../lib/communityServerPreferences";
+import type { CommunityChatServer, CommunityNotificationLevel, CommunityServerRole, MinecraftServer, TurboSubscription, UserProfile } from "../types";
 
 const roleOptions: CommunityServerRole[] = ["member", "mod", "admin"];
 const FALLBACK_TEXT_CHANNELS = [{ id: "general", name: "general" }, { id: "rules", name: "rules" }];
@@ -62,6 +64,9 @@ export default function CommunityServer() {
   const [memberLookup, setMemberLookup] = useState("");
   const [banLookup, setBanLookup] = useState("");
   const [notice, setNotice] = useState("");
+  const [turbo, setTurbo] = useState<TurboSubscription | null>(null);
+  const [themeColors, setThemeColors] = useState(["#5865f2", "#a855f7", "#ec4899"]);
+  const [notificationLevel, setNotificationLevelState] = useState<CommunityNotificationLevel>("mentions");
 
   useEffect(() => {
     const unsubscribe = subscribeToCommunityChatServers((items) => { setServers(items); setReady(true); });
@@ -80,6 +85,8 @@ export default function CommunityServer() {
     const unsubscribe = subscribeToProfile(user.uid, setMyProfile);
     return typeof unsubscribe === "function" ? unsubscribe : undefined;
   }, [user]);
+  useEffect(() => user ? subscribeToTurbo(user.uid, setTurbo) : undefined, [user]);
+  useEffect(() => user && serverId ? subscribeToCommunityNotificationLevel(serverId, user.uid, setNotificationLevelState) : undefined, [serverId, user]);
 
   const server = useMemo(() => servers.find((item) => item.id === serverId) ?? null, [serverId, servers]);
   const isStaff = isStaffRole(role);
@@ -104,12 +111,14 @@ export default function CommunityServer() {
   const linkedMinecraftServer = useMemo(() => minecraftServers.find((item) => item.id === server?.linkedMinecraftServerId) ?? null, [minecraftServers, server?.linkedMinecraftServerId]);
   const linkedMinecraftCode = useMemo(() => (linkedMinecraftServer?.code ?? []).map(getIcon), [linkedMinecraftServer?.code]);
   const linkedMinecraftCodeText = linkedMinecraftCode.map((icon) => icon.label).join(" • ");
+  const serverGradient = server?.themeColors?.length === 3 ? `linear-gradient(135deg, ${server.themeColors.join(", ")})` : "linear-gradient(135deg, #5865f2, #1e1f22)";
 
   useEffect(() => {
     if (!server) return;
     setBannerUrl(server.bannerUrl ?? "");
     setIconUrl(server.iconUrl ?? "");
     setLinkedMinecraftServerId(server.linkedMinecraftServerId ?? "");
+    setThemeColors(server.themeColors?.length === 3 ? server.themeColors : ["#5865f2", "#a855f7", "#ec4899"]);
     if (!textChannels.some((item) => item.id === channelId)) setChannelId(textChannels[0]?.id ?? "general");
   }, [server, channelId, textChannels]);
 
@@ -128,6 +137,20 @@ export default function CommunityServer() {
     if (!server || !canManage) return;
     await updateCommunityChatServer(server.id, { bannerUrl: bannerUrl.trim().slice(0, 1000), iconUrl: iconUrl.trim().slice(0, 1000) });
     setNotice("Server look saved.");
+  }
+
+  async function saveTheme() {
+    if (!server || !canManage) return;
+    if (!isStaff && !isTurboActive(turbo)) { setNotice("Turbo is required for three-color server themes."); return; }
+    await updateCommunityChatServer(server.id, { themeColors });
+    setNotice("Three-color theme saved.");
+  }
+
+  async function changeNotificationLevel(level: CommunityNotificationLevel) {
+    if (!user) return;
+    await setCommunityNotificationLevel(serverId, user.uid, level);
+    setNotificationLevelState(level);
+    setNotice(`Server notifications: ${level}.`);
   }
 
   async function setVisibility(isPublic: boolean) {
@@ -223,9 +246,9 @@ export default function CommunityServer() {
   }
 
   return (
-    <div className="fixed inset-0 z-40 bg-[#313338] text-white">
+    <div className="fixed inset-0 z-40 bg-[#313338] text-white" style={{ background: serverGradient }}>
       <div className="flex h-screen w-screen overflow-hidden bg-[#313338]">
-        <div className="grid h-screen w-full grid-cols-[72px_240px_minmax(0,1fr)] xl:grid-cols-[72px_240px_minmax(0,1fr)_300px]">
+        <div className="grid h-screen w-full grid-cols-[minmax(0,1fr)] md:grid-cols-[72px_240px_minmax(0,1fr)] xl:grid-cols-[72px_240px_minmax(0,1fr)_300px]">
           <aside className="hidden overflow-y-auto bg-[#1e1f22] p-3 md:block">
             <Link to="/chat-servers" aria-label="Browse servers" className="cursor-target grid h-12 w-12 place-items-center rounded-2xl bg-[#5865f2] text-white shadow-lg shadow-black/30 transition hover:rounded-[18px]"><ArrowLeft size={20}/></Link>
             <div className="my-3 h-px bg-white/10" />
@@ -235,9 +258,9 @@ export default function CommunityServer() {
               ))}
             </div>
           </aside>
-          <aside className="flex min-h-0 flex-col border-r border-black/40 bg-[#2b2d31]">
+          <aside className="hidden min-h-0 flex-col border-r border-black/40 bg-[#2b2d31] md:flex">
             <div className="relative border-b border-black/40 shadow-sm shadow-black/20">
-              <div className="h-[84px] bg-[#1e1f22] bg-cover bg-center" style={{ backgroundImage: server.bannerUrl ? `linear-gradient(rgba(0,0,0,.15), rgba(0,0,0,.45)), url(${JSON.stringify(server.bannerUrl)})` : "linear-gradient(135deg, #5865f2, #1e1f22)" }} />
+              <div className="h-[84px] bg-[#1e1f22] bg-cover bg-center" style={{ backgroundImage: server.bannerUrl ? `linear-gradient(rgba(0,0,0,.15), rgba(0,0,0,.45)), url(${JSON.stringify(server.bannerUrl)})` : serverGradient }} />
               <div className="flex items-center gap-3">
                 <Link to="/chat-servers" aria-label="Back to servers" className="cursor-target absolute left-2 top-2 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-black/35 text-white/70 hover:bg-black/60 hover:text-white"><ArrowLeft size={15}/></Link>
                 {server.iconUrl ? <img src={server.iconUrl} alt="" className="absolute left-3 top-12 h-14 w-14 rounded-2xl border-4 border-[#2b2d31] object-cover"/> : <span className="absolute left-3 top-12 grid h-14 w-14 shrink-0 place-items-center rounded-2xl border-4 border-[#2b2d31] bg-[#5865f2] font-mono text-xl font-black text-white">{initial(serverName)}</span>}
@@ -268,7 +291,7 @@ export default function CommunityServer() {
             </div>
           </aside>
 
-          <main className="min-h-0 min-w-0 bg-[#313338]">
+          <main className="min-h-0 min-w-0 bg-[#313338]" style={{ background: server.themeColors?.length === 3 ? `linear-gradient(145deg, #313338 15%, ${server.themeColors[0]}44 60%, ${server.themeColors[2]}33 100%)` : undefined }}>
             {selectedChannel?.id === "rules" ? (
               <div className="flex h-full min-h-0 flex-col">
                 <header className="flex h-[49px] items-center gap-2 border-b border-black/35 bg-[#313338] px-5 shadow-sm shadow-black/20"><ShieldCheck size={19} className="text-white/45"/><h2 className="font-bold text-white">rules</h2></header>
@@ -282,6 +305,7 @@ export default function CommunityServer() {
           <aside className="hidden min-h-0 overflow-y-auto border-l border-black/40 bg-[#2b2d31] p-4 xl:block">
             <div><p className="text-xs font-bold uppercase tracking-wide text-white/35">About</p><p className="mt-3 text-sm leading-6 text-[#b5bac1]">{serverDescription}</p></div>
             <div className="mt-5 rounded-xl border border-white/[.07] bg-black/15 p-3"><button type="button" onClick={() => { void navigator.clipboard?.writeText(inviteUrl); setNotice("Invite link copied."); }} className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand-500 px-3 py-2 text-xs font-bold text-white hover:bg-brand-400"><Copy size={13}/>Copy invite</button><p className="mt-2 truncate text-center font-mono text-[10px] text-white/30">{inviteCode}</p></div>
+            <div className="mt-4 rounded-xl border border-white/[.07] bg-black/15 p-3"><p className="flex items-center gap-2 text-xs font-bold text-white"><Bell size={13}/>Notifications</p><div className="mt-2 grid grid-cols-3 gap-1">{(["all", "mentions", "none"] as CommunityNotificationLevel[]).map((level) => <button key={level} type="button" onClick={() => void changeNotificationLevel(level)} className={`rounded px-2 py-1.5 text-[10px] font-bold capitalize ${notificationLevel === level ? "bg-[#5865f2] text-white" : "bg-white/[.06] text-white/45 hover:text-white"}`}>{level}</button>)}</div></div>
             <div className="mt-5 rounded-xl border border-white/[.07] bg-black/15 p-3">
               <p className="font-mono text-[10px] font-bold uppercase tracking-[.16em] text-white/28">Minecraft Education</p>
               {linkedMinecraftServer ? (
@@ -324,6 +348,8 @@ export default function CommunityServer() {
                 </div>
                 <button type="button" onClick={() => void saveAppearance()} className="mt-3 rounded-lg bg-brand-500 px-3 py-2 text-xs font-bold text-white">Save look</button>
               </section>
+              <section className="rounded-xl border border-fuchsia-300/15 bg-gradient-to-br from-fuchsia-500/10 to-violet-500/5 p-4"><h3 className="flex items-center gap-2 font-bold text-white"><Zap size={15} className="text-fuchsia-300"/>Turbo theme</h3><p className="mt-1 text-xs leading-5 text-white/35">Mix exactly three colors into the server banner and frame. Turbo costs 200 credits per 30 days.</p><div className="mt-3 grid grid-cols-3 gap-2">{themeColors.map((color, index) => <input key={index} aria-label={`Theme color ${index + 1}`} type="color" value={color} onChange={(event) => setThemeColors((colors) => colors.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} className="h-11 w-full rounded bg-transparent"/>)}</div><div className="mt-3 h-12 rounded-lg" style={{ background: `linear-gradient(135deg, ${themeColors.join(", ")})` }}/><button type="button" onClick={() => void saveTheme()} disabled={!isStaff && !isTurboActive(turbo)} className="mt-3 rounded-lg bg-gradient-to-r from-fuchsia-500 to-violet-500 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-35">{isStaff || isTurboActive(turbo) ? "Save Turbo theme" : "Turbo required"}</button></section>
+              <section className="rounded-xl border border-white/8 bg-black/15 p-4"><h3 className="flex items-center gap-2 font-bold text-white"><Bot size={15}/>Installed bots</h3><p className="mt-1 text-xs leading-5 text-white/35">{server.botIds?.length ?? 0} app{server.botIds?.length === 1 ? "" : "s"} installed. Add or remove apps in the marketplace.</p><Link to="/bot-marketplace" className="mt-3 inline-flex rounded-lg bg-[#5865f2] px-3 py-2 text-xs font-bold text-white">Open marketplace</Link></section>
               <section className="rounded-xl border border-white/8 bg-black/15 p-4">
                 <h3 className="font-bold text-white">Visibility</h3>
                 <p className="mt-1 text-xs leading-5 text-white/35">Public servers show up in Join a server. Private servers only join through an invite link.</p>

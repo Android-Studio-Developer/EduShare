@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Bell, BellOff, CheckCheck, Clock3, Hash, Reply, Send, Trash2, Wifi, WifiOff, X } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { checkLocalProfanity, formatBanRemaining, getChatBanRemaining, screenChatMessageRemote } from "../lib/aiModeration";
-import { deleteCommunityChatMessage, sendCommunityChatMessage, subscribeToCommunityChatMessages } from "../lib/communityChatServers";
+import { deleteCommunityChatMessage, sendCommunityBotMessage, sendCommunityChatMessage, subscribeToCommunityChatMessages } from "../lib/communityChatServers";
 import { isOnline, subscribeToAllProfiles, subscribeToProfile } from "../lib/profiles";
 import { subscribeToGuilds } from "../lib/guilds";
 import { createNotification } from "../lib/notifications";
@@ -14,6 +14,10 @@ import ProfileCard from "./ProfileCard";
 import RankBadge from "./RankBadge";
 import GuildTag from "./GuildTag";
 import MentionInput from "./MentionInput";
+import { recordDeveloperBotEvent, subscribeToDeveloperBots, verifyWithDeveloperBot } from "../lib/developers";
+import { renderDeveloperBotCommand } from "../lib/eduScript";
+import { getCommunityNotificationLevels } from "../lib/communityServerPreferences";
+import type { DeveloperBot } from "../types";
 
 function timeAgo(ts: number) {
   const seconds = Math.floor((Date.now() - ts) / 1000);
@@ -86,6 +90,7 @@ export default function CommunityServerChat({ server, embedded = false, channelI
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
   const [guilds, setGuilds] = useState<Guild[]>([]);
+  const [developerBots, setDeveloperBots] = useState<DeveloperBot[]>([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState("");
@@ -120,6 +125,7 @@ export default function CommunityServerChat({ server, embedded = false, channelI
     const unsubscribe = subscribeToGuilds(setGuilds);
     return typeof unsubscribe === "function" ? unsubscribe : undefined;
   }, []);
+  useEffect(() => subscribeToDeveloperBots(setDeveloperBots), []);
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages.length]);
@@ -149,6 +155,9 @@ export default function CommunityServerChat({ server, embedded = false, channelI
       const sentReply = replyTo;
       const shouldPingReply = replyPing;
       const pingTargets = resolvePingRecipients(value, server, profiles, user.uid);
+      const botMatch = value.match(/^[/@]([a-z0-9_]{1,24})\s+([a-z0-9_-]{1,24})(?:\s+([\s\S]*))?$/i);
+      const installedBot = botMatch ? developerBots.find((bot) => bot.enabled && server.botIds?.includes(bot.id) && bot.handle.toLowerCase() === botMatch[1].toLowerCase()) : undefined;
+      const botCommand = installedBot && botMatch ? installedBot.commands.find((item) => item.name.toLowerCase() === botMatch[2].toLowerCase()) : undefined;
       const sendPromise = sendCommunityChatMessage(server.id, user.uid, safeText(profile.displayName, "Member"), profile.rank, profile.photoUrl || "", value, replyTo ? { id: replyTo.id, authorId: replyTo.authorId, author: safeText(replyTo.authorName, "Member"), text: safeText(replyTo.text), ping: replyPing } : undefined, channelId);
       const queuedNotice = window.setTimeout(() => setNotice("Message queued — reconnecting to chat…"), 4_000);
       setText("");
@@ -157,12 +166,30 @@ export default function CommunityServerChat({ server, embedded = false, channelI
       void sendPromise.then((sent) => {
         window.clearTimeout(queuedNotice);
         setNotice("");
-        if (sentReply && shouldPingReply && sentReply.authorId !== user.uid) {
-          void createNotification({ recipientId: sentReply.authorId, type: "mention", title: `${safeText(profile.displayName, "Someone")} replied to you in #${roomName}`, message: value.slice(0, 100), link: `/chat-servers/${server.id}` });
+        void getCommunityNotificationLevels(server.id).then((levels) => {
+          const notified = new Set<string>();
+          if (sentReply && shouldPingReply && sentReply.authorId !== user.uid && levels.get(sentReply.authorId) !== "none") {
+            notified.add(sentReply.authorId);
+            void createNotification({ recipientId: sentReply.authorId, type: "mention", title: `${safeText(profile.displayName, "Someone")} replied to you in #${roomName}`, message: value.slice(0, 100), link: `/chat-servers/${server.id}` });
+          }
+          pingTargets.ids.forEach((recipientId) => {
+            if (levels.get(recipientId) === "none") return;
+            notified.add(recipientId);
+            void createNotification({ recipientId, type: "mention", title: `${safeText(profile.displayName, "Someone")} pinged @${pingTargets.labels.join(", @")} in #${roomName}`, message: value.slice(0, 100), link: `/chat-servers/${server.id}` });
+          });
+          [...new Set([server.ownerId, ...(server.memberIds ?? [])])].filter((id) => id !== user.uid && !notified.has(id) && levels.get(id) === "all").forEach((recipientId) => {
+            void createNotification({ recipientId, type: "mention", title: `New message in ${server.name} #${roomName}`, message: `${safeText(profile.displayName, "Someone")}: ${value.slice(0, 90)}`, link: `/chat-servers/${server.id}` });
+          });
+        }).catch(() => undefined);
+        if (installedBot) {
+          const startedAt = Date.now();
+          const args = botMatch?.[3] ?? "";
+          const reply = botCommand ? renderDeveloperBotCommand(botCommand, safeText(profile.displayName, "Member"), args) : `Unknown command. Try: ${installedBot.commands.map((item) => item.name).join(", ")}`;
+          if (botCommand?.action === "verify" && installedBot.verificationEnabled) void verifyWithDeveloperBot(installedBot.id, user.uid).catch(() => undefined);
+          void sendCommunityBotMessage(server.id, user.uid, installedBot, reply, channelId)
+            .then(() => recordDeveloperBotEvent(installedBot.id, { command: botMatch?.[2] ?? "unknown", invokedById: user.uid, invokedByName: safeText(profile.displayName, "Member"), status: botCommand ? "success" : "unknown_command", latencyMs: Date.now() - startedAt }))
+            .catch(() => undefined);
         }
-        pingTargets.ids.forEach((recipientId) => {
-          void createNotification({ recipientId, type: "mention", title: `${safeText(profile.displayName, "Someone")} pinged @${pingTargets.labels.join(", @")} in #${roomName}`, message: value.slice(0, 100), link: `/chat-servers/${server.id}` });
-        });
         void screenChatMessageRemote(user.uid, value, user.email).then((result) => {
           if (result.spam) void deleteCommunityChatMessage(server.id, sent.id, channelId);
         }).catch(() => undefined);
@@ -180,7 +207,7 @@ export default function CommunityServerChat({ server, embedded = false, channelI
   }
 
   return (
-    <div className={`flex h-full min-h-0 flex-col overflow-hidden bg-[#313338] ${embedded ? "rounded-none border-0" : "rounded-2xl border border-black/35"}`}>
+    <div style={{ background: server.themeColors?.length === 3 ? `linear-gradient(145deg, #313338 20%, ${server.themeColors[0]}38 65%, ${server.themeColors[2]}2e 100%)` : undefined }} className={`flex h-full min-h-0 flex-col overflow-hidden bg-[#313338] ${embedded ? "rounded-none border-0" : "rounded-2xl border border-black/35"}`}>
       <header className="flex h-[49px] items-center gap-3 border-b border-black/35 bg-[#313338] px-4 shadow-sm shadow-black/20">
         <Hash size={22} className="shrink-0 text-[#80848e]" />
         <div className="min-w-0 flex-1"><h2 className="truncate text-base font-bold text-white">{roomName}</h2></div><span className={`ml-auto flex items-center gap-1 rounded px-2 py-1 text-[10px] ${chatStatus === "online" ? "text-emerald-300/80" : chatStatus === "reconnecting" ? "text-amber-300/80" : "text-red-300/80"}`}>{chatStatus === "online" ? <Wifi size={11}/> : <WifiOff size={11}/>} {chatStatus}</span>
@@ -192,10 +219,10 @@ export default function CommunityServerChat({ server, embedded = false, channelI
           const messageText = safeText(message.text);
           return (
           <div key={message.id} id={`community-message-${message.id}`} className="group flex items-start gap-3 px-2 py-1.5 hover:bg-black/[.08]">
-            <button type="button" onClick={() => setOpenProfileId(message.authorId)} className="cursor-target shrink-0">
+            <button type="button" disabled={message.isBot} onClick={() => !message.isBot && setOpenProfileId(message.authorId)} className="cursor-target shrink-0 disabled:cursor-default">
               {message.authorPhotoUrl ? <img src={message.authorPhotoUrl} alt="" className="h-9 w-9 rounded-full object-cover"/> : <span className="grid h-9 w-9 place-items-center rounded-full bg-brand-500/15 font-bold text-brand-300">{initial(authorName)}</span>}
             </button>
-            <div className="min-w-0 flex-1">{message.replyToId && <button type="button" onClick={() => document.getElementById(`community-message-${message.replyToId}`)?.scrollIntoView({ behavior: "smooth", block: "center" })} className="cursor-target mb-1 flex max-w-full items-center gap-1.5 text-left text-[10px] text-white/35 hover:text-white/55"><Reply size={10}/><span className="shrink-0 font-semibold text-brand-300/70">{safeText(message.replyToAuthor, "Member")}</span><span className="truncate">{safeText(message.replyToText)}</span>{message.replyPing === false && <BellOff size={9}/>}</button>}<div className="flex flex-wrap items-center gap-1.5"><button type="button" onClick={() => setOpenProfileId(message.authorId)} className={`cursor-target truncate text-sm font-semibold ${rankNameClass(message.authorRank)}`}>{authorName}</button><GuildTag tag={guildByProfileId.get(message.authorId)?.tag} icon={guildByProfileId.get(message.authorId)?.tagIcon} font={guildByProfileId.get(message.authorId)?.tagFont} imageUrl={guildByProfileId.get(message.authorId)?.tagImageUrl} color={guildByProfileId.get(message.authorId)?.tagColor}/><RankBadge rank={message.authorRank}/><span className="text-[10px] text-white/25">{timeAgo(message.createdAt)}</span>{message.deliveryState === "sending" ? <Clock3 size={10} className="text-amber-300/60"/> : message.authorId === user?.uid ? <CheckCheck size={10} className="text-emerald-300/45"/> : null}</div><p className="mt-0.5 break-words text-sm text-white/72 [overflow-wrap:anywhere]">{renderMessageText(messageText, publicEmojiPool(profiles, message.authorId))}</p></div>
+            <div className="min-w-0 flex-1">{message.replyToId && <button type="button" onClick={() => document.getElementById(`community-message-${message.replyToId}`)?.scrollIntoView({ behavior: "smooth", block: "center" })} className="cursor-target mb-1 flex max-w-full items-center gap-1.5 text-left text-[10px] text-white/35 hover:text-white/55"><Reply size={10}/><span className="shrink-0 font-semibold text-brand-300/70">{safeText(message.replyToAuthor, "Member")}</span><span className="truncate">{safeText(message.replyToText)}</span>{message.replyPing === false && <BellOff size={9}/>}</button>}<div className="flex flex-wrap items-center gap-1.5"><button type="button" disabled={message.isBot} onClick={() => !message.isBot && setOpenProfileId(message.authorId)} className={`cursor-target truncate text-sm font-semibold disabled:cursor-default ${message.isBot ? "text-indigo-300" : rankNameClass(message.authorRank)}`}>{authorName}</button>{message.isBot && <span className="rounded bg-[#5865f2] px-1.5 py-0.5 text-[9px] font-black text-white">APP</span>}<GuildTag tag={guildByProfileId.get(message.authorId)?.tag} icon={guildByProfileId.get(message.authorId)?.tagIcon} font={guildByProfileId.get(message.authorId)?.tagFont} imageUrl={guildByProfileId.get(message.authorId)?.tagImageUrl} color={guildByProfileId.get(message.authorId)?.tagColor}/>{!message.isBot && <RankBadge rank={message.authorRank}/>}<span className="text-[10px] text-white/25">{timeAgo(message.createdAt)}</span>{message.deliveryState === "sending" ? <Clock3 size={10} className="text-amber-300/60"/> : message.authorId === user?.uid ? <CheckCheck size={10} className="text-emerald-300/45"/> : null}</div><p className="mt-0.5 break-words text-sm text-white/72 [overflow-wrap:anywhere]">{renderMessageText(messageText, publicEmojiPool(profiles, message.authorId))}</p></div>
             <button type="button" onClick={() => { setReplyTo(message); setReplyPing(true); }} aria-label={`Reply to ${authorName}`} className="cursor-target rounded p-1.5 text-white/25 opacity-0 hover:bg-white/10 hover:text-[#dbdee1] group-hover:opacity-100"><Reply size={13}/></button>
             {(user?.uid === message.authorId || user?.uid === server.ownerId || isStaffRole(role)) && <button type="button" onClick={() => void deleteCommunityChatMessage(server.id, message.id, channelId)} aria-label="Delete message" className="cursor-target opacity-0 rounded p-1.5 text-white/25 hover:bg-red-500/10 hover:text-red-300 group-hover:opacity-100"><Trash2 size={13}/></button>}
           </div>
